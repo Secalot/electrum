@@ -63,6 +63,7 @@ setup(
         'electrum_plugins.digitalbitbox',
         'electrum_plugins.trustedcoin',
         'electrum_plugins.virtualkeyboard',
+		'electrum_plugins.secalot',
     ],
     package_dir={
         'electrum': 'lib',

@@ -326,9 +326,9 @@ class DeviceMgr(ThreadJob, PrintError):
         for client in clients:
             client.timeout(cutoff)
 
-    def register_devices(self, device_pairs):
-        for pair in device_pairs:
-            self.recognised_hardware.add(pair)
+    def register_devices(self, device_info):
+        for info in device_info:
+            self.recognised_hardware.add(info)
 
     def create_client(self, device, handler, plugin):
         # Get from cache first
@@ -502,14 +502,29 @@ class DeviceMgr(ThreadJob, PrintError):
         devices = []
         for d in hid_list:
             product_key = (d['vendor_id'], d['product_id'])
+            product_key_ex = (d['vendor_id'], d['product_id'], d['usage_page'])
+            use_product_key = False
+            use_product_key_ex = False
             if product_key in self.recognised_hardware:
-                # Older versions of hid don't provide interface_number
+                use_product_key = True
+            if product_key_ex in self.recognised_hardware:
+                use_product_key_ex = True
+            
+            if use_product_key == True:
                 interface_number = d.get('interface_number', 0)
                 serial = d['serial_number']
                 if len(serial) == 0:
                     serial = d['path']
                 devices.append(Device(d['path'], interface_number,
                                       serial, product_key))
+            elif use_product_key_ex == True:
+                # Older versions of hid don't provide interface_number
+                interface_number = d.get('interface_number', 0)
+                serial = d['serial_number']
+                if len(serial) == 0:
+                    serial = d['path']
+                devices.append(Device(d['path'], interface_number,
+                                      serial, product_key_ex))
 
         # Now find out what was disconnected
         pairs = [(dev.path, dev.id_) for dev in devices]
