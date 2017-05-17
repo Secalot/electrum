@@ -1,3 +1,9 @@
+# Release 2.9
+  * SPV: use binary search to locate connection point
+  * SPV: add blockchain checkpoints, configurable by user
+  * Fix crash on reading older wallet formats.
+  * TrustedCoin: remove pay-per-tx option
+
 # Release 2.8.2
   * show paid invoices in history tab
   * improve CPFP dialog

@@ -368,6 +368,8 @@ block_explorer_info = {
                         {'tx': 'tx', 'addr': 'address'}),
     'TradeBlock.com': ('https://tradeblock.com/blockchain',
                         {'tx': 'tx', 'addr': 'address'}),
+    'BlockCypher.com': ('https://live.blockcypher.com/btc',
+                        {'tx': 'tx', 'addr': 'address'}),
     'system default': ('blockchain:',
                         {'tx': 'tx', 'addr': 'address'}),
 }
@@ -534,7 +536,7 @@ class SocketPipe:
                 raise timeout
             except ssl.SSLError:
                 raise timeout
-            except socket.error, err:
+            except socket.error as err:
                 if err.errno == 60:
                     raise timeout
                 elif err.errno in [11, 35, 10035]:

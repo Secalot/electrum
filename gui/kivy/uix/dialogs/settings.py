@@ -92,9 +92,15 @@ Builder.load_string('''
                 CardSeparator
                 SettingsItem:
                     status: root.network_status()
-                    title: _('Network') + ': ' + self.status
-                    description: _("Network status and server selection.")
+                    title: _('Server') + ': ' + self.status
+                    description: _("Select your history server.")
                     action: partial(root.network_dialog, self)
+                CardSeparator
+                SettingsItem:
+                    status: root.proxy_status()
+                    title: _('Proxy') + ': ' + self.status
+                    description: _("Proxy configuration.")
+                    action: partial(root.proxy_dialog, self)
                 CardSeparator
                 SettingsItem:
                     status: 'ON' if bool(app.plugins.get('labels')) else 'OFF'
@@ -113,6 +119,12 @@ Builder.load_string('''
                     title: _('Coin selection') + ': ' + self.status
                     description: "Coin selection method"
                     action: partial(root.coinselect_dialog, self)
+                CardSeparator
+                SettingsItem:
+                    status: "%d blocks"% app.num_blocks
+                    title: _('Blockchain') + ': ' + self.status
+                    description: _("Configure checkpoints")
+                    action: partial(root.blockchain_dialog, self)
 ''')
 
 
@@ -131,9 +143,11 @@ class SettingsDialog(Factory.Popup):
         self._fee_dialog = None
         self._rbf_dialog = None
         self._network_dialog = None
+        self._proxy_dialog = None
         self._language_dialog = None
         self._unit_dialog = None
         self._coinselect_dialog = None
+        self._blockchain_dialog = None
 
     def update(self):
         self.wallet = self.app.wallet
@@ -177,19 +191,71 @@ class SettingsDialog(Factory.Popup):
             self._coinselect_dialog = ChoiceDialog(_('Coin selection'), choosers, chooser_name, cb)
         self._coinselect_dialog.open()
 
-    def network_dialog(self, item, dt):
-        if self._network_dialog is None:
+    def blockchain_dialog(self, item, dt):
+        from checkpoint_dialog import CheckpointDialog
+        if self._blockchain_dialog is None:
+            def callback(height, value):
+                if value:
+                    self.app.network.blockchain.set_checkpoint(height, value)
+            self._blockchain_dialog = CheckpointDialog(self.app.network, callback)
+        self._blockchain_dialog.open()
+
+    def proxy_status(self):
+        server, port, protocol, proxy, auto_connect = self.app.network.get_parameters()
+        return proxy.get('host') +':' + proxy.get('port') if proxy else _('None')
+
+    def proxy_dialog(self, item, dt):
+        if self._proxy_dialog is None:
             server, port, protocol, proxy, auto_connect = self.app.network.get_parameters()
-            def cb(popup):
-                server = popup.ids.host.text
-                auto_connect = popup.ids.auto_connect.active
+            def callback(popup):
+                if popup.ids.mode.text != 'None':
+                    proxy = {
+                        'mode':popup.ids.mode.text,
+                        'host':popup.ids.host.text,
+                        'port':popup.ids.port.text,
+                        'user':popup.ids.user.text,
+                        'password':popup.ids.password.text
+                    }
+                else:
+                    proxy = None
                 self.app.network.set_parameters(server, port, protocol, proxy, auto_connect)
+                item.status = self.proxy_status()
+            popup = Builder.load_file('gui/kivy/uix/ui_screens/proxy.kv')
+            popup.ids.mode.text = proxy.get('mode') if proxy else 'None'
+            popup.ids.host.text = proxy.get('host') if proxy else ''
+            popup.ids.port.text = proxy.get('port') if proxy else ''
+            popup.ids.user.text = proxy.get('user') if proxy else ''
+            popup.ids.password.text = proxy.get('password') if proxy else ''
+            popup.on_dismiss = lambda: callback(popup)
+            self._proxy_dialog = popup
+        self._proxy_dialog.open()
+
+    def network_dialog(self, item, dt):
+        host, port, protocol, proxy, auto_connect = self.app.network.get_parameters()
+        servers = self.app.network.get_servers()
+        if self._network_dialog is None:
+            def cb1(popup):
+                host = str(popup.ids.host.text)
+                port = str(popup.ids.port.text)
+                auto_connect = popup.ids.auto_connect.active
+                self.app.network.set_parameters(host, port, protocol, proxy, auto_connect)
                 item.status = self.network_status()
+            def cb2(host):
+                from electrum.network import DEFAULT_PORTS
+                pp = servers.get(host, DEFAULT_PORTS)
+                port = pp.get(protocol, '')
+                popup.ids.host.text = host
+                popup.ids.port.text = port
+            def cb3():
+                ChoiceDialog(_('Choose a server'), sorted(servers), popup.ids.host.text, cb2).open()
             popup = Builder.load_file('gui/kivy/uix/ui_screens/network.kv')
-            popup.ids.host.text = server
-            popup.ids.auto_connect.active = auto_connect
-            popup.on_dismiss = lambda: cb(popup)
+            popup.ids.chooser.on_release = cb3
+            popup.on_dismiss = lambda: cb1(popup)
             self._network_dialog = popup
+
+        self._network_dialog.ids.auto_connect.active = auto_connect
+        self._network_dialog.ids.host.text = host
+        self._network_dialog.ids.port.text = port
         self._network_dialog.open()
 
     def network_status(self):

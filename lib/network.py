@@ -205,8 +205,6 @@ class Network(util.DaemonThread):
         self.config = SimpleConfig(config) if type(config) == type({}) else config
         self.num_server = 8 if not self.config.get('oneserver') else 0
         self.blockchain = Blockchain(self.config, self)
-        # A deque of interface header requests, processed left-to-right
-        self.bc_requests = deque()
         # Server for addresses and transactions
         self.default_server = self.config.get('server')
         # Sanitize default server
@@ -227,9 +225,7 @@ class Network(util.DaemonThread):
         self.banner = ''
         self.donation_address = ''
         self.relay_fee = None
-        self.heights = {}
-        self.merkle_roots = {}
-        self.utxo_roots = {}
+        self.headers = {}
         # callbacks passed with subscriptions
         self.subscriptions = defaultdict(list)
         self.sub_cache = {}
@@ -297,7 +293,8 @@ class Network(util.DaemonThread):
             pass
 
     def get_server_height(self):
-        return self.heights.get(self.default_server, 0)
+        h = self.headers.get(self.default_server)
+        return h['block_height'] if h else 0
 
     def server_is_lagging(self):
         sh = self.get_server_height()
@@ -462,13 +459,20 @@ class Network(util.DaemonThread):
     def set_parameters(self, host, port, protocol, proxy, auto_connect):
         proxy_str = serialize_proxy(proxy)
         server = serialize_server(host, port, protocol)
+        # sanitize parameters
+        try:
+            deserialize_server(serialize_server(host, port, protocol))
+            if proxy:
+                proxy_modes.index(proxy["mode"]) + 1
+                int(proxy['port'])
+        except:
+            return
         self.config.set_key('auto_connect', auto_connect, False)
         self.config.set_key("proxy", proxy_str, False)
         self.config.set_key("server", server, True)
         # abort if changes were not allowed by config
         if self.config.get('server') != server or self.config.get('proxy') != proxy_str:
             return
-
         self.auto_connect = auto_connect
         if self.proxy != proxy or self.protocol != protocol:
             # Restart the network defaulting to the given server
@@ -494,7 +498,12 @@ class Network(util.DaemonThread):
             if suggestion and self.protocol == deserialize_server(suggestion)[2]:
                 self.switch_to_interface(suggestion)
             else:
-                self.switch_to_random_interface()
+                # switch to one that has the correct header (not height)
+                header = self.get_header(self.get_local_height())
+                filtered = map(lambda x:x[0], filter(lambda x: x[1]==header, self.headers.items()))
+                if filtered:
+                    choice = random.choice(filtered)
+                    self.switch_to_interface(choice)
 
     def switch_to_interface(self, server):
         '''Switch to server as our interface.  If no connection exists nor
@@ -545,7 +554,7 @@ class Network(util.DaemonThread):
             interface.server_version = result
         elif method == 'blockchain.headers.subscribe':
             if error is None:
-                self.on_header(interface, result)
+                self.on_notify_header(interface, result)
         elif method == 'server.peers.subscribe':
             if error is None:
                 self.irc_servers = parse_servers(result)
@@ -676,13 +685,15 @@ class Network(util.DaemonThread):
             self.set_status('disconnected')
         if server in self.interfaces:
             self.close_interface(self.interfaces[server])
-            self.heights.pop(server, None)
+            self.headers.pop(server, None)
             self.notify('interfaces')
 
     def new_interface(self, server, socket):
         self.add_recent_server(server)
-        self.interfaces[server] = interface = Interface(server, socket)
-        self.queue_request('blockchain.headers.subscribe', [], interface)
+        interface = Interface(server, socket)
+        interface.mode = 'checkpoint'
+        self.interfaces[server] = interface
+        self.request_header(interface, self.blockchain.checkpoint_height)
         if server == self.default_server:
             self.switch_to_interface(server)
         self.notify('interfaces')
@@ -729,94 +740,124 @@ class Network(util.DaemonThread):
                 else:
                     self.switch_to_interface(self.default_server)
 
-    def request_chunk(self, interface, data, idx):
+    def request_chunk(self, interface, idx):
         interface.print_error("requesting chunk %d" % idx)
         self.queue_request('blockchain.block.get_chunk', [idx], interface)
-        data['chunk_idx'] = idx
-        data['req_time'] = time.time()
+        interface.request = idx
+        interface.req_time = time.time()
 
     def on_get_chunk(self, interface, response):
         '''Handle receiving a chunk of block headers'''
-        if self.bc_requests:
-            req_if, data = self.bc_requests[0]
-            req_idx = data.get('chunk_idx')
-            # Ignore unsolicited chunks
-            if req_if == interface and req_idx == response['params'][0]:
-                idx = self.blockchain.connect_chunk(req_idx, response['result'])
-                # If not finished, get the next chunk
-                if idx < 0 or self.get_local_height() >= data['if_height']:
-                    self.bc_requests.popleft()
-                    self.notify('updated')
-                else:
-                    self.request_chunk(interface, data, idx)
+        if response.get('error'):
+            interface.print_error(response.get('error'))
+            return
+        # Ignore unsolicited chunks
+        index = response['params'][0]
+        if interface.request != index:
+            return
+        connect = self.blockchain.connect_chunk(index, response['result'])
+        # If not finished, get the next chunk
+        if not connect:
+            return
+        if self.get_local_height() < interface.tip:
+            self.request_chunk(interface, index+1)
+        else:
+            interface.request = None
+        self.notify('updated')
 
-    def request_header(self, interface, data, height):
+    def request_header(self, interface, height):
         interface.print_error("requesting header %d" % height)
         self.queue_request('blockchain.block.get_header', [height], interface)
-        data['header_height'] = height
-        data['req_time'] = time.time()
-        if not 'chain' in data:
-            data['chain'] = []
+        interface.request = height
+        interface.req_time = time.time()
 
     def on_get_header(self, interface, response):
         '''Handle receiving a single block header'''
         if self.blockchain.downloading_headers:
             return
-        if self.bc_requests:
-            req_if, data = self.bc_requests[0]
-            req_height = data.get('header_height', -1)
-            # Ignore unsolicited headers
-            if req_if == interface and req_height == response['params'][0]:
-                next_height = self.blockchain.connect_header(data['chain'], response['result'])
-                # If not finished, get the next header
-                if next_height in [True, False]:
-                    self.bc_requests.popleft()
-                    if next_height:
-                        self.switch_lagging_interface(interface.server)
-                        self.notify('updated')
-                    else:
-                        interface.print_error("header didn't connect, dismissing interface")
-                        interface.close()
+        header = response.get('result')
+        if not header:
+            interface.print_error(response)
+            self.connection_down(interface.server)
+            return
+        height = header.get('block_height')
+        if interface.request != height:
+            interface.print_error("unsolicited header",interface.request, height)
+            self.connection_down(interface.server)
+            return
+        self.on_header(interface, header)
+
+    def on_header(self, interface, header):
+        height = header.get('block_height')
+        if interface.mode == 'checkpoint':
+            if self.blockchain.pass_checkpoint(header):
+                interface.mode = 'default'
+                self.queue_request('blockchain.headers.subscribe', [], interface)
+            else:
+                if interface != self.interface or self.auto_connect:
+                    interface.print_error("checkpoint failed")
+                    self.connection_down(interface.server)
+            interface.request = None
+            return
+        can_connect = self.blockchain.can_connect(header)
+        if interface.mode == 'backward':
+            if can_connect:
+                interface.good = height
+                interface.mode = 'binary'
+                interface.print_error("binary search")
+                next_height = (interface.bad + interface.good) // 2
+            else:
+                interface.bad = height
+                delta = interface.tip - height
+                next_height = interface.tip - 2 * delta
+                if next_height < 0:
+                    interface.print_error("header didn't connect, dismissing interface")
+                    self.connection_down(interface.server)
+        elif interface.mode == 'binary':
+            if can_connect:
+                interface.good = height
+            else:
+                interface.bad = height
+            if interface.good == interface.bad - 1:
+                interface.print_error("catching up from %d"% interface.good)
+                interface.mode = 'default'
+                next_height = interface.good
+            else:
+                next_height = (interface.bad + interface.good) // 2
+        elif interface.mode == 'default':
+            if can_connect:
+                if height > self.get_local_height():
+                    self.blockchain.save_header(header)
+                    self.notify('updated')
+                if height < interface.tip:
+                    next_height = height + 1
                 else:
-                    self.request_header(interface, data, next_height)
-
-    def bc_request_headers(self, interface, data):
-        '''Send a request for the next header, or a chunk of them,
-        if necessary.
-        '''
-        if self.blockchain.downloading_headers:
-            return False
-        local_height, if_height = self.get_local_height(), data['if_height']
-        if if_height <= local_height:
-            return False
-        elif if_height > local_height + 50:
-            self.request_chunk(interface, data, (local_height + 1) / 2016)
+                    next_height = None
+            else:
+                interface.mode = 'backward'
+                interface.bad = height
+                next_height = height - 1
         else:
-            self.request_header(interface, data, if_height)
-        return True
+            raise BaseException(interface.mode)
+        # If not finished, get the next header
+        if next_height:
+            if interface.mode != 'default':
+                self.request_header(interface, next_height)
+            else:
+                local_height = self.get_local_height()
+                if interface.tip > local_height + 50:
+                    self.request_chunk(interface, (local_height + 1) // 2016)
+                else:
+                    self.request_header(interface, next_height)
+        else:
+            interface.request = None
 
-    def handle_bc_requests(self):
-        '''Work through each interface that has notified us of a new header.
-        Send it requests if it is ahead of our blockchain object.
-        '''
-        while self.bc_requests:
-            interface, data = self.bc_requests.popleft()
-            # If the connection was lost move on
-            if not interface in self.interfaces.values():
-                continue
-            req_time = data.get('req_time')
-            if not req_time:
-                # No requests sent yet.  This interface has a new height.
-                # Request headers if it is ahead of our blockchain
-                if not self.bc_request_headers(interface, data):
-                    continue
-            elif time.time() - req_time > 20:
+    def maintain_requests(self):
+        for interface in self.interfaces.values():
+            if interface.request and time.time() - interface.request_time > 20:
                 interface.print_error("blockchain request timed out")
                 self.connection_down(interface.server)
                 continue
-            # Put updated request state back at head of deque
-            self.bc_requests.appendleft((interface, data))
-            break
 
     def wait_on_sockets(self):
         # Python docs say Windows doesn't like empty selects.
@@ -843,23 +884,29 @@ class Network(util.DaemonThread):
         while self.is_running():
             self.maintain_sockets()
             self.wait_on_sockets()
-            self.handle_bc_requests()
+            self.maintain_requests()
             self.run_jobs()    # Synchronizer and Verifier
             self.process_pending_sends()
-
         self.stop_network()
         self.on_stop()
 
-    def on_header(self, i, header):
+    def on_notify_header(self, i, header):
         height = header.get('block_height')
         if not height:
             return
-        self.heights[i.server] = height
-        self.merkle_roots[i.server] = header.get('merkle_root')
-        self.utxo_roots[i.server] = header.get('utxo_root')
+        self.headers[i.server] = header
+        i.tip = height
+        local_height = self.get_local_height()
 
-        # Queue this interface's height for asynchronous catch-up
-        self.bc_requests.append((i, {'if_height': height}))
+        if i.tip > local_height:
+            i.print_error("better height", height)
+            # if I can connect, do it right away
+            if self.blockchain.can_connect(header):
+                self.blockchain.save_header(header)
+                self.notify('updated')
+            # otherwise trigger a search
+            elif i.request is None:
+                self.on_header(i, header)
 
         if i == self.interface:
             self.switch_lagging_interface()

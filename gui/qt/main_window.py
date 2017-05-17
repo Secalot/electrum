@@ -1065,7 +1065,12 @@ class ElectrumWindow(QMainWindow, MessageBoxMixin, PrintError):
         self.amount_e.shortcut.connect(self.spend_max)
         self.payto_e.textChanged.connect(self.update_fee)
         self.amount_e.textEdited.connect(self.update_fee)
-        self.amount_e.textEdited.connect(self.reset_max)
+
+        def reset_max(t):
+            self.is_max = False
+            self.max_button.setEnabled(not bool(t))
+        self.amount_e.textEdited.connect(reset_max)
+        self.fiat_send_e.textEdited.connect(reset_max)
 
         def entry_changed():
             text = ""
@@ -1112,9 +1117,6 @@ class ElectrumWindow(QMainWindow, MessageBoxMixin, PrintError):
     def spend_max(self):
         self.is_max = True
         self.do_update_fee()
-
-    def reset_max(self):
-        self.is_max = False
 
     def update_fee(self):
         self.require_fee_update = True
@@ -1276,7 +1278,7 @@ class ElectrumWindow(QMainWindow, MessageBoxMixin, PrintError):
                 self.show_error(_('Invalid Amount'))
                 return
 
-        freeze_fee = (self.fee_e.isModified() and (self.fee_e.text() or self.fee_e.hasFocus()))
+        freeze_fee = self.fee_e.isVisible() and self.fee_e.isModified() and (self.fee_e.text() or self.fee_e.hasFocus())
         fee = self.fee_e.get_amount() if freeze_fee else None
         coins = self.get_coins()
         return outputs, fee, label, coins
@@ -2306,9 +2308,10 @@ class ElectrumWindow(QMainWindow, MessageBoxMixin, PrintError):
         if not d.exec_():
             return
 
-        tx = self.wallet.sweep(get_pk(), self.network, self.config, get_address(), None)
-        if not tx:
-            self.show_message(_('No inputs found. (Note that inputs need to be confirmed)'))
+        try:
+            tx = self.wallet.sweep(get_pk(), self.network, self.config, get_address(), None)
+        except BaseException as e:
+            self.show_message(str(e))
             return
         self.warn_if_watching_only()
         self.show_transaction(tx)
@@ -2860,6 +2863,7 @@ class ElectrumWindow(QMainWindow, MessageBoxMixin, PrintError):
 
     def bump_fee_dialog(self, tx):
         is_relevant, is_mine, v, fee = self.wallet.get_wallet_delta(tx)
+        tx_label = self.wallet.get_label(tx.txid())
         tx_size = tx.estimated_size()
         d = WindowModalDialog(self, _('Bump Fee'))
         vbox = QVBoxLayout(d)
@@ -2893,4 +2897,4 @@ class ElectrumWindow(QMainWindow, MessageBoxMixin, PrintError):
             return
         if is_final:
             new_tx.set_rbf(False)
-        self.show_transaction(new_tx)
+        self.show_transaction(new_tx, tx_label)
