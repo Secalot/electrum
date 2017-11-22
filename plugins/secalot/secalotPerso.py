@@ -1,8 +1,8 @@
-import secalotPersoMainDialog
-import secalotPersoDisplaySeedDialog
+from .secalotPersoMainDialog import *
+from  .secalotPersoDisplaySeedDialog import *
 
-from PyQt4 import QtCore, QtGui
-from PyQt4.QtGui import QDialog, QMessageBox
+from PyQt5 import QtCore
+from PyQt5.QtWidgets import QDialog, QMessageBox, QInputDialog, QLineEdit
 
 from btchip.btchip import btchip
 
@@ -10,19 +10,19 @@ import binascii
 
 from .mnemonic import Mnemonic
 
-class SecalotDisplaySeedDialog(QtGui.QDialog):
-    def __init__(self, seed):
+class SecalotDisplaySeedDialog(QDialog):
+    def __init__(self, entropy):
         QDialog.__init__(self, None, QtCore.Qt.WindowSystemMenuHint | QtCore.Qt.WindowTitleHint)
-        self.ui = secalotPersoDisplaySeedDialog.Ui_SecalotPersoDisplaySeedDialog()
+        self.ui = Ui_SecalotPersoDisplaySeedDialog()
         self.ui.setupUi(self)
         self.mnemonic = Mnemonic('english')
-        self.ui.SeedTextBrowser.setText(self.mnemonic.to_mnemonic(seed))
+        self.ui.SeedTextBrowser.setText(self.mnemonic.to_mnemonic(entropy))
 
-class SecalotPersoMainDialog(QtGui.QDialog):
+class SecalotPersoMainDialog(QDialog):
 
     def __init__(self, parent, btchip):
         QDialog.__init__(self, parent, QtCore.Qt.WindowSystemMenuHint | QtCore.Qt.WindowTitleHint)
-        self.ui = secalotPersoMainDialog.Ui_SecalotPersoMainDialog()
+        self.ui = Ui_SecalotPersoMainDialog()
         self.ui.setupUi(self)
         self.mnemonic = Mnemonic('english')
         self.dongle = btchip
@@ -33,14 +33,14 @@ class SecalotPersoMainDialog(QtGui.QDialog):
         seed = None
         pin = self.ui.PINCodeLineEdit.text()
         repeatedPin = self.ui.RepeatPINCodeLineEdit.text()
-        pinLength = pin.length()
+        pinLength = len(pin)
 
-        if pin.compare(repeatedPin) != 0:
-            QMessageBox.warning(self, "Error", "PIN codes do not match", "OK")
+        if pin != repeatedPin:
+            QMessageBox.warning(self, "Error", "PIN codes do not match", QMessageBox.Ok)
             return
 
         if pinLength < 4 or pinLength > 32:
-            QMessageBox.warning(self, "Error", "PIN length should be between 4 and 32 characters", "OK")
+            QMessageBox.warning(self, "Error", "PIN length should be between 4 and 32 characters", QMessageBox.Ok)
             return
 
         if self.ui.RestoreWalletRadioButton.isChecked():
@@ -49,37 +49,38 @@ class SecalotPersoMainDialog(QtGui.QDialog):
             try:
                 if seedText.startswith('0X') or seedText.startswith('0x'):
                     seedText = seedText[2:]
-                
-                seed = seedText.decode('hex')
+
+                seed = bytearray.fromhex(seedText)
 
                 if len(seed) > 64 or len(seed) < 32:
-                    QMessageBox.warning(self, "Error", "Hexadecimal seed length should be between 32 and 64 bytes", "OK")
+                    QMessageBox.warning(self, "Error", "Hexadecimal seed length should be between 32 and 64 bytes", QMessageBox.Ok)
                     return
             except:
                 try:
                     if self.mnemonic.check(seedText) == False:
-                        QMessageBox.warning(self, "Error", "The seed mnemonic is invalid", "OK")
+                        QMessageBox.warning(self, "Error", "The seed mnemonic is invalid", QMessageBox.Ok)
                         return
-                    seed = Mnemonic.to_seed(seedText)
+                    seed = self.mnemonic.to_seed(seedText)
                 except:
-                    QMessageBox.warning(self, "Error", "The seed mnemonic is invalid", "OK")
+                    QMessageBox.warning(self, "Error", "The seed mnemonic is invalid", QMessageBox.Ok)
                     return
         else:
+            entropy = self.dongle.getRandom(32)
+            phrase = self.mnemonic.to_mnemonic(entropy)
+            seed = self.mnemonic.to_seed(phrase)
             restoringWallet = False
 
         try:
             setupResult = self.dongle.setup(btchip.OPERATION_MODE_WALLET, btchip.FEATURE_RFC6979, 0x00, 0x05, str(pin), '', '', seed)
         except Exception as e:
-            QMessageBox.warning(self, "Error", "Personalization failed", "OK")
+            QMessageBox.warning(self, "Error", "Personalization failed", QMessageBox.Ok)
             return
 
         if not restoringWallet:
-            setupResult = setupResult['trustedInputKey'] + setupResult['developerKey']
-            setupResult.pop(0)
-            displaySeedDialog = SecalotDisplaySeedDialog(setupResult)
+            displaySeedDialog = SecalotDisplaySeedDialog(entropy)
             displaySeedDialog.exec_()
         else:
-            QMessageBox.information(self, "Success", "Your new wallet is successfully created", "OK")
+            QMessageBox.information(self, "Success", "Your new wallet is successfully created", QMessageBox.Ok)
             
 
         self.done(QDialog.Accepted)

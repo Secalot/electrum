@@ -1,15 +1,15 @@
 import threading
 
-from PyQt4.Qt import (QDialog, QInputDialog, QLineEdit,
-                      QVBoxLayout, QLabel, SIGNAL)
-import PyQt4.QtCore as QtCore
+from PyQt5.Qt import (QDialog, QInputDialog, QLineEdit,
+                      QVBoxLayout, QLabel)
+import PyQt5.QtCore as QtCore
 
 from electrum.i18n import _
 from .secalot import SecalotPlugin
 from ..hw_wallet.qt import QtHandlerBase, QtPluginBase
 from electrum_gui.qt.util import *
 
-from secalotPerso import SecalotPersoMainDialog
+from .secalotPerso import SecalotPersoMainDialog
 
 class Plugin(SecalotPlugin, QtPluginBase):
     icon_unpaired = ":icons/secalot_unpaired.png"
@@ -25,7 +25,7 @@ class Secalot_Handler(QtHandlerBase):
         super(Secalot_Handler, self).__init__(win, 'Secalot')
 
     def word_dialog(self, msg):
-        response = QInputDialog.getText(self.top_level_window(), "Ledger Wallet Authentication", msg, QLineEdit.Password)
+        response = QInputDialog.getText(self.top_level_window(), "Secalot Wallet Authentication", msg, QLineEdit.Password)
         if not response[1]:
             self.word = None
         else:

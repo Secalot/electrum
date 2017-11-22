@@ -1,5 +1,6 @@
 #
 # Copyright (c) 2013 Pavol Rusnak
+# Copyright (c) 2017 mruddy
 #
 # Permission is hereby granted, free of charge, to any person obtaining a copy of
 # this software and associated documentation files (the "Software"), to deal in
@@ -31,20 +32,23 @@ from pbkdf2 import PBKDF2
 
 PBKDF2_ROUNDS = 2048
 
+
 class ConfigurationError(Exception):
     pass
 
+
 # From <http://tinyurl.com/p54ocsk>
-def binary_search(a, x, lo=0, hi=None):   # can't use a to specify default for hi
-    hi = hi if hi is not None else len(a) # hi defaults to len(a)
-    pos = bisect.bisect_left(a, x, lo, hi)   # find insertion position
-    return (pos if pos != hi and a[pos] == x else -1) # don't walk off the end
+def binary_search(a, x, lo=0, hi=None):                # can't use a to specify default for hi
+    hi = hi if hi is not None else len(a)              # hi defaults to len(a)
+    pos = bisect.bisect_left(a, x, lo, hi)             # find insertion position
+    return (pos if pos != hi and a[pos] == x else -1)  # don't walk off the end
+
 
 class Mnemonic(object):
     def __init__(self, language):
         self.radix = 2048
         with open('%s/%s.txt' % (self._get_directory(), language), 'r') as f:
-            self.wordlist = [w.strip() for w in f.readlines()]
+            self.wordlist = [w.strip().decode('utf8') if sys.version < '3' else w.strip() for w in f.readlines()]
         if len(self.wordlist) != self.radix:
             raise ConfigurationError('Wordlist should contain %d words, but it contains %d words.' % (self.radix, len(self.wordlist)))
 
@@ -69,6 +73,7 @@ class Mnemonic(object):
 
     @classmethod
     def detect_language(cls, code):
+        code = cls.normalize_string(code)
         first = code.split(' ')[0]
         languages = cls.list_languages()
 
@@ -80,24 +85,28 @@ class Mnemonic(object):
         raise ConfigurationError("Language not detected")
 
     def generate(self, strength=128):
-        if strength % 32 > 0:
-            raise ValueError('Strength should be divisible by 32, but it is not (%d).' % strength)
+        if strength not in [128, 160, 192, 224, 256]:
+            raise ValueError('Strength should be one of the following [128, 160, 192, 224, 256], but it is not (%d).' % strength)
         return self.to_mnemonic(os.urandom(strength // 8))
 
     # Adapted from <http://tinyurl.com/oxmn476>
     def to_entropy(self, words):
         if not isinstance(words, list):
             words = words.split(' ')
-        if len(words) % 3 > 0:
-            raise ValueError('Word list size must be multiple of three words.')
+        if len(words) not in [12, 15, 18, 21, 24]:
+            raise ValueError('Number of words must be one of the following: [12, 15, 18, 21, 24], but it is not (%d).' % len(words))
         # Look up all the words in the list and construct the
         # concatenation of the original entropy and the checksum.
         concatLenBits = len(words) * 11
         concatBits = [False] * concatLenBits
         wordindex = 0
+        if self.detect_language(' '.join(words)) == 'english':
+            use_binary_search = True
+        else:
+            use_binary_search = False
         for word in words:
             # Find the words index in the wordlist
-            ndx = binary_search(self.wordlist, word)
+            ndx = binary_search(self.wordlist, word) if use_binary_search else self.wordlist.index(word)
             if ndx < 0:
                 raise LookupError('Unable to find "%s" in word list.' % word)
             # Set the next 11 bits to the value of the index.
@@ -125,8 +134,8 @@ class Mnemonic(object):
         return entropy
 
     def to_mnemonic(self, data):
-        if len(data) % 4 > 0:
-            raise ValueError('Data length in bits should be divisible by 32, but it is not (%d bytes = %d bits).' % (len(data), len(data) * 8))
+        if len(data) not in [16, 20, 24, 28, 32]:
+            raise ValueError('Data length should be one of the following: [16, 20, 24, 28, 32], but it is not (%d).' % len(data))
         h = hashlib.sha256(data).hexdigest()
         b = bin(int(binascii.hexlify(data), 16))[2:].zfill(len(data) * 8) + \
             bin(int(h, 16))[2:].zfill(256)[:len(data) * 8 // 32]
@@ -134,16 +143,14 @@ class Mnemonic(object):
         for i in range(len(b) // 11):
             idx = int(b[i * 11:(i + 1) * 11], 2)
             result.append(self.wordlist[idx])
-        if self.detect_language(' '.join(result)) == 'japanese': # Japanese must be joined by ideographic space.
-            result_phrase = u'\xe3\x80\x80'.join(result)
+        if self.detect_language(' '.join(result)) == 'japanese':  # Japanese must be joined by ideographic space.
+            result_phrase = u'\u3000'.join(result)
         else:
             result_phrase = ' '.join(result)
         return result_phrase
 
     def check(self, mnemonic):
-        if self.detect_language(mnemonic.replace(u'\xe3\x80\x80', ' ')) == 'japanese':
-            mnemonic = mnemonic.replace(u'\xe3\x80\x80', ' ') # Japanese will likely input with ideographic space.
-        mnemonic = mnemonic.split(' ')
+        mnemonic = self.normalize_string(mnemonic).split(' ')
         if len(mnemonic) % 3 > 0:
             return False
         try:
@@ -158,8 +165,39 @@ class Mnemonic(object):
         nh = bin(int(hashlib.sha256(nd).hexdigest(), 16))[2:].zfill(256)[:l // 33]
         return h == nh
 
+    def expand_word(self, prefix):
+        if prefix in self.wordlist:
+            return prefix
+        else:
+            matches = [word for word in self.wordlist if word.startswith(prefix)]
+            if len(matches) == 1:  # matched exactly one word in the wordlist
+                return matches[0]
+            else:
+                # exact match not found.
+                # this is not a validation routine, just return the input
+                return prefix
+
+    def expand(self, mnemonic):
+        return ' '.join(map(self.expand_word, mnemonic.split(' ')))
+
     @classmethod
     def to_seed(cls, mnemonic, passphrase=''):
         mnemonic = cls.normalize_string(mnemonic)
         passphrase = cls.normalize_string(passphrase)
         return PBKDF2(mnemonic, u'mnemonic' + passphrase, iterations=PBKDF2_ROUNDS, macmodule=hmac, digestmodule=hashlib.sha512).read(64)
+
+
+def main():
+    import binascii
+    import sys
+    if len(sys.argv) > 1:
+        data = sys.argv[1]
+    else:
+        data = sys.stdin.readline().strip()
+    data = binascii.unhexlify(data)
+    m = Mnemonic('english')
+    print(m.to_mnemonic(data))
+
+
+if __name__ == '__main__':
+    main()

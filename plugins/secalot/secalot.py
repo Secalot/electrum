@@ -1,20 +1,19 @@
 from binascii import hexlify
 from struct import pack, unpack
 import hashlib
-import time
-import sys
-import traceback
 
-import electrum
+
 from electrum import bitcoin
 from electrum.bitcoin import TYPE_ADDRESS, int_to_hex, var_int
 from electrum.i18n import _
-from electrum.plugins import BasePlugin, hook
 from electrum.keystore import Hardware_KeyStore, parse_xpubkey
 from ..hw_wallet import HW_PluginBase
-from electrum.util import format_satoshis_plain
+from electrum.transaction import Transaction
+from electrum.util import bfh, bh2u
 
 from electrum_gui.qt import *
+
+from PyQt5.QtWidgets import QDialog
 
 try:
     import hid
@@ -46,7 +45,7 @@ class Secalot_Client():
 
         firmwareVersion = self.dongleObject.getFirmwareVersion()
 
-        if firmwareVersion['specialVersion'] & 0x01 <> 0:
+        if firmwareVersion['specialVersion'] & 0x01 != 0:
             walletInitialized = True
 
         return walletInitialized
@@ -55,40 +54,33 @@ class Secalot_Client():
         return "Secalot"
 
     def i4b(self, x):
-        return pack('>I', x)        
+        return pack('>I', x)
 
-    def get_xpub(self, bip32_path):
-        try:
-            if self.is_initialized() == False:
-                return None
-
-            self.check_pin()
-
-            splitPath = bip32_path.split('/')
-            if splitPath[0] == 'm':
-                splitPath = splitPath[1:]
-                bip32_path = bip32_path[2:]
-            fingerprint = 0
-            if len(splitPath) > 1:
-                prevPath = "/".join(splitPath[0:len(splitPath) - 1])
-                nodeData = self.dongleObject.getWalletPublicKey(prevPath)
-                publicKey = compress_public_key(nodeData['publicKey'])
-                h = hashlib.new('ripemd160')
-                h.update(hashlib.sha256(publicKey).digest())
-                fingerprint = unpack(">I", h.digest()[0:4])[0]
-            nodeData = self.dongleObject.getWalletPublicKey(bip32_path)
-            publicKey = compress_public_key(nodeData['publicKey'])
-            depth = len(splitPath)
-            lastChild = splitPath[len(splitPath) - 1].split('\'')
-            if len(lastChild) == 1:
-                childnum = int(lastChild[0])
-            else:
-                childnum = 0x80000000 | int(lastChild[0])
-            xpub = bitcoin.serialize_xpub(0, str(nodeData['chainCode']), str(publicKey), depth,
-                                          self.i4b(fingerprint), self.i4b(childnum))
-            return xpub
-        except Exception as e:
+    def get_xpub(self, bip32_path, xtype):
+        if self.is_initialized() == False:
             return None
+
+        self.check_pin()
+
+        splitPath = bip32_path.split('/')
+        if splitPath[0] == 'm':
+            splitPath = splitPath[1:]
+            bip32_path = bip32_path[2:]
+        fingerprint = 0
+        if len(splitPath) > 1:
+            prevPath = "/".join(splitPath[0:len(splitPath) - 1])
+            nodeData = self.dongleObject.getWalletPublicKey(prevPath)
+            publicKey = compress_public_key(nodeData['publicKey'])#
+            h = hashlib.new('ripemd160')
+            h.update(hashlib.sha256(publicKey).digest())
+            fingerprint = unpack(">I", h.digest()[0:4])[0]
+        nodeData = self.dongleObject.getWalletPublicKey(bip32_path)
+        publicKey = compress_public_key(nodeData['publicKey'])
+        depth = len(splitPath)
+        lastChild = splitPath[len(splitPath) - 1].split('\'')
+        childnum = int(lastChild[0]) if len(lastChild) == 1 else 0x80000000 | int(lastChild[0])
+        xpub = bitcoin.serialize_xpub(xtype, nodeData['chainCode'], publicKey, depth, self.i4b(fingerprint), self.i4b(childnum))
+        return xpub
 
     def check_pin(self):
             pinVerified = False
@@ -96,9 +88,9 @@ class Secalot_Client():
 
             firmwareVersion = self.dongleObject.getFirmwareVersion()
 
-            if firmwareVersion['specialVersion'] & 0x01 <> 0:
+            if firmwareVersion['specialVersion'] & 0x01 != 0:
                 walletInitialized = True
-            if firmwareVersion['specialVersion'] & 0x02 <> 0:
+            if firmwareVersion['specialVersion'] & 0x02 != 0:
                 pinVerified = True
 
             if walletInitialized == False:
@@ -106,7 +98,7 @@ class Secalot_Client():
 
             if pinVerified == False:
                 remaining_attempts = self.dongleObject.getVerifyPinRemainingAttempts()
-                if remaining_attempts <> 1:
+                if remaining_attempts != 1:
                     msg = "Enter your PIN - remaining attempts : " + str(remaining_attempts)
                 else:
                     msg = "Enter your PIN - WARNING : LAST ATTEMPT. If the PIN is not correct, the dongle will be wiped."
@@ -116,7 +108,7 @@ class Secalot_Client():
                 pin = pin.encode()
                 try:
                     self.dongleObject.verifyPin(pin)
-                except BTChipException, e:
+                except BTChipException as e:
                     if e.sw == 0x6982:
                         raise BaseException("Invalid PIN.")
                     elif e.sw == 0x6700:
@@ -163,10 +155,10 @@ class Secalot_KeyStore(Hardware_KeyStore):
             raise BaseException("Can not sign a zero length message")
 
         try:
-            dongle.signMessagePrepare(address_path, message)
+            dongle.signMessagePrepare(address_path, bytearray(message, 'utf8'))
             self.handler.show_message("Comfirm message signing on your device...")
             signature = dongle.signMessageSign()
-        except BTChipException, e:
+        except BTChipException as e:
             if e.sw == 0x6985:
                 raise BaseException("Operation timed out. Please retry.")
             if e.sw == 0x6a80:
@@ -186,11 +178,9 @@ class Secalot_KeyStore(Hardware_KeyStore):
             r = r[1:]
         if sLength == 33:
             s = s[1:]
-        r = str(r)
-        s = str(s)
 
         # And convert it
-        return chr(27 + 4 + (signature[0] & 0x01)) + r + s
+        return (bytes)([27 + 4 + (signature[0] & 0x01)]) + r + s
 
     def sign_transaction(self, tx, password):
         if tx.is_complete():
@@ -201,12 +191,8 @@ class Secalot_KeyStore(Hardware_KeyStore):
         chipInputs = []
         redeemScripts = []
         signatures = []
-        preparedTrustedInputs = []
-        changePath = ""
-        changeAmount = None
-        output = None
-        outputAmount = None
         p2shTransaction = False
+        segwitTransaction = False
 
         client = self.get_client()
         dongle = client.dongleObject
@@ -216,10 +202,16 @@ class Secalot_KeyStore(Hardware_KeyStore):
         derivations = self.get_tx_derivations(tx)
         for txin in tx.inputs():
             if txin['type'] == 'coinbase':
-                self.handler.show_error("Coinbase not supported")     # should never happen
+                raise BaseException("Coinbase not supported")     # should never happen
 
             if txin['type'] in ['p2sh']:
                 p2shTransaction = True
+
+            if txin['type'] in ['p2wpkh-p2sh', 'p2wsh-p2sh']:
+                segwitTransaction = True
+
+            if txin['type'] in ['p2wpkh', 'p2wsh']:
+                segwitTransaction = True
 
             pubkeys, x_pubkeys = tx.get_sorted_pubkeys(txin)
             for i, x_pubkey in enumerate(x_pubkeys):
@@ -229,92 +221,96 @@ class Secalot_KeyStore(Hardware_KeyStore):
                     hwAddress = "%s/%d/%d" % (self.get_derivation()[2:], s[0], s[1])
                     break
             else:
-                self.handler.show_error("No matching x_key for sign_transaction") # should never happen
+                raise BaseException("No matching x_key for sign_transaction") # should never happen
 
-            inputs.append([txin['prev_tx'].raw, txin['prevout_n'], txin.get('redeemScript'), txin['prevout_hash'], signingPos ])
+            redeemScript = Transaction.get_preimage_script(txin)
+            inputs.append([txin['prev_tx'].raw, txin['prevout_n'], redeemScript, txin['prevout_hash'], signingPos, txin.get('sequence', 0xffffffff - 1) ])
             inputsPaths.append(hwAddress)
             pubKeys.append(pubkeys)
 
-        if p2shTransaction == True:
-            self.handler.show_error("P2SH transactions are currently not supported")
+        # Sanity check
+        if p2shTransaction:
+            for txin in tx.inputs():
+                if txin['type'] != 'p2sh':
+                    raise BaseException("P2SH / regular input mixed in same transaction not supported") # should never happen
 
         txOutput = var_int(len(tx.outputs()))
         for txout in tx.outputs():
             output_type, addr, amount = txout
             txOutput += int_to_hex(amount, 8)
             script = tx.pay_script(output_type, addr)
-            txOutput += var_int(len(script)/2)
+            txOutput += var_int(len(script)//2)
             txOutput += script
-        txOutput = txOutput.decode('hex')
+        txOutput = bfh(txOutput)
 
-        # Recognize outputs - only one output and one change is authorized
-        if len(tx.outputs()) > 2: # should never happen
-            self.handler.show_error("Transaction with more than 2 outputs not supported")
-        for _type, address, amount in tx.outputs():
-            assert _type == TYPE_ADDRESS
-            info = tx.output_info.get(address)
-            if (info is not None) and (len(tx.outputs()) != 1):
-                index, xpubs, m = info
-                changePath = self.get_derivation()[2:] + "/%d/%d"%index
-                changeAmount = amount
-            else:
-                output = address
-                outputAmount = amount
+        self.handler.show_message(_("Confirm transaction on your device..."))
 
-        # Get trusted inputs from the original transactions
-        for utxo in inputs:
-            txtmp = bitcoinTransaction(bytearray(utxo[0].decode('hex')))
-            chipInputs.append(dongle.getTrustedInput(txtmp, utxo[1]))
-            redeemScripts.append(txtmp.outputs[utxo[1]].script)                    
-
-        # Sign all inputs
-        firstTransaction = True
-        inputIndex = 0
-        rawTx = tx.serialize()
-        while inputIndex < len(inputs):
-            dongle.startUntrustedTransaction(firstTransaction, inputIndex,
-                                                        chipInputs, redeemScripts[inputIndex])
-            outputData = dongle.finalizeInput(output, format_satoshis_plain(outputAmount),
-                format_satoshis_plain(tx.get_fee()), changePath)
-            reorganize = True
-
-            if firstTransaction:
-                transactionOutput = outputData['outputData']
-            # Sign input
-            try:
-                self.handler.show_message(_("Confirm transaction on your device..."))
-                inputSignature = dongle.untrustedHashSign(inputsPaths[inputIndex], "")
-            except BTChipException, e:
-                if e.sw == 0x6985:
-                    raise BaseException("Operation timed out. Please retry.")
+        try:
+            # Get trusted inputs from the original transactions
+            for utxo in inputs:
+                sequence = int_to_hex(utxo[5], 4)
+                if segwitTransaction:
+                    txtmp = bitcoinTransaction(bfh(utxo[0]))
+                    tmp = bfh(utxo[3])[::-1]
+                    tmp += bfh(int_to_hex(utxo[1], 4))
+                    tmp += txtmp.outputs[utxo[1]].amount
+                    chipInputs.append({'value' : tmp, 'witness' : True, 'sequence' : sequence})
+                    redeemScripts.append(bfh(utxo[2]))
+                elif not p2shTransaction:
+                    txtmp = bitcoinTransaction(bfh(utxo[0]))
+                    trustedInput = dongle.getTrustedInput(txtmp, utxo[1])
+                    trustedInput['sequence'] = sequence
+                    chipInputs.append(trustedInput)
+                    redeemScripts.append(txtmp.outputs[utxo[1]].script)
                 else:
-                    raise e
-            finally:
-                self.handler.clear_dialog()
+                    txtmp = bitcoinTransaction(bfh(utxo[0]))
+                    trustedInput = dongle.getTrustedInput(txtmp, utxo[1])
+                    trustedInput['sequence'] = sequence
+                    chipInputs.append(trustedInput)
+                    redeemScripts.append(bfh(utxo[2]))
 
-            inputSignature[0] = 0x30
-            signatures.append(inputSignature)
-            inputIndex = inputIndex + 1
-            firstTransaction = False
+            # Sign all inputs
+            firstTransaction = True
+            inputIndex = 0
 
-        # Reformat transaction
-        inputIndex = 0
-        while inputIndex < len(inputs):
-            inputScript = get_regular_input_script(signatures[inputIndex], pubKeys[inputIndex][0].decode('hex'))
-            preparedTrustedInputs.append([ chipInputs[inputIndex]['value'], inputScript ])
-            inputIndex = inputIndex + 1
+            if segwitTransaction:
+                dongle.startUntrustedTransaction(True, inputIndex,
+                                                            chipInputs, redeemScripts[inputIndex])
+                dongle.finalizeInputFull(txOutput)
 
-        updatedTransaction = format_transaction(transactionOutput, preparedTrustedInputs)
-        updatedTransaction = hexlify(updatedTransaction)
+                while inputIndex < len(inputs):
+                    singleInput = [ chipInputs[inputIndex] ]
+                    dongle.startUntrustedTransaction(False, 0,
+                                                            singleInput, redeemScripts[inputIndex])
+                    inputSignature = dongle.untrustedHashSign(inputsPaths[inputIndex], '')
+                    inputSignature[0] = 0x30 # force for 1.4.9+
+                    signatures.append(inputSignature)
+                    inputIndex = inputIndex + 1
+            else:
+                while inputIndex < len(inputs):
+                    dongle.startUntrustedTransaction(firstTransaction, inputIndex,
+                                                            chipInputs, redeemScripts[inputIndex])
+                    dongle.finalizeInputFull(txOutput)
+                    inputSignature = dongle.untrustedHashSign(inputsPaths[inputIndex], '', lockTime=tx.locktime)
+                    inputSignature[0] = 0x30 # force for 1.4.9+
+                    signatures.append(inputSignature)
+                    inputIndex = inputIndex + 1
+        finally:
+            pass
+            self.handler.finished()
 
-        tx.update(updatedTransaction)
+        for i, txin in enumerate(tx.inputs()):
+            signingPos = inputs[i][4]
+            txin['signatures'][signingPos] = bh2u(signatures[i])
+        tx.raw = tx.serialize()
+
 
 class SecalotPlugin(HW_PluginBase):
     libraries_available = LIBRARIES_AVAILABLE
     keystore_class = Secalot_KeyStore
 
     DEVICE_IDS = [ 
-                   (0x1209, 0x7777, 0xff00),
+                   (0x1209, 0x7000, 0xff00),
                  ]
 
     def __init__(self, parent, config, name):
@@ -332,7 +328,7 @@ class SecalotPlugin(HW_PluginBase):
         self.handler = handler
 
         client = self.get_secalot_device(device.path)
-        if client <> None:
+        if client != None:
             client = Secalot_Client(client, device.path)
         return client
 
@@ -348,11 +344,11 @@ class SecalotPlugin(HW_PluginBase):
             if persoResult == QDialog.Rejected:
                 raise BaseException("Canceled by user")
 
-    def get_xpub(self, device_id, derivation, wizard):
+    def get_xpub(self, device_id, derivation, xtype, wizard):
         devmgr = self.device_manager()
         client = devmgr.client_by_id(device_id)
         client.handler = self.create_handler(wizard)
-        xpub = client.get_xpub(derivation)
+        xpub = client.get_xpub(derivation, xtype)
         return xpub
 
     def get_client(self, keystore, force_pair=True):
@@ -360,7 +356,7 @@ class SecalotPlugin(HW_PluginBase):
         handler = keystore.handler
         with devmgr.hid_lock:
             client = devmgr.client_for_keystore(self, handler, keystore, force_pair)        
-        if client <> None:
+        if client != None:
             man_string = client.dongleObject.dongle.device.get_manufacturer_string()
             if man_string == None:
                 client.dongleObject = btchip(self.get_secalot_device(client.hidDevicePath))
