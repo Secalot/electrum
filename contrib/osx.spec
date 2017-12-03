@@ -2,7 +2,7 @@
 
 from PyInstaller.utils.hooks import collect_data_files, collect_submodules
 
-home = '/Users/voegtlin/electrum/'
+home = os.path.normpath(os.environ['ELECTRUM_HOME']) + '/'
 block_cipher=None
 
 # see https://github.com/pyinstaller/pyinstaller/issues/2005
@@ -38,6 +38,7 @@ a = Analysis([home+'electrum',
               home+'plugins/trezor/qt.py',
               home+'plugins/keepkey/qt.py',
               home+'plugins/ledger/qt.py',
+              home+'plugins/secalot/secalot.py'
               ],
              datas=datas,
              hiddenimports=hiddenimports,

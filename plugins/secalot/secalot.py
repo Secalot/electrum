@@ -166,7 +166,7 @@ class Secalot_KeyStore(Hardware_KeyStore):
             else:
                 raise e
         finally:
-            self.handler.clear_dialog()
+            self.handler.finished()
 
         # Parse the ASN.1 signature
 
@@ -282,7 +282,7 @@ class Secalot_KeyStore(Hardware_KeyStore):
                     singleInput = [ chipInputs[inputIndex] ]
                     dongle.startUntrustedTransaction(False, 0,
                                                             singleInput, redeemScripts[inputIndex])
-                    inputSignature = dongle.untrustedHashSign(inputsPaths[inputIndex], '')
+                    inputSignature = dongle.untrustedHashSign(inputsPaths[inputIndex], lockTime=tx.locktime)
                     inputSignature[0] = 0x30 # force for 1.4.9+
                     signatures.append(inputSignature)
                     inputIndex = inputIndex + 1
@@ -310,7 +310,7 @@ class SecalotPlugin(HW_PluginBase):
     keystore_class = Secalot_KeyStore
 
     DEVICE_IDS = [ 
-                   (0x1209, 0x7000, 0xff00),
+                   (0x1209, 0x7000, 0x03, 0xff00),
                  ]
 
     def __init__(self, parent, config, name):

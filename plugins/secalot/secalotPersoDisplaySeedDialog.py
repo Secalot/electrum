@@ -2,7 +2,7 @@
 
 # Form implementation generated from reading ui file 'secalotPersoDisplaySeedDialog.ui'
 #
-# Created by: PyQt5 UI code generator 5.8.1
+# Created by: PyQt5 UI code generator 5.9.1
 #
 # WARNING! All changes made in this file will be lost!
 
@@ -11,20 +11,35 @@ from PyQt5 import QtCore, QtGui, QtWidgets
 class Ui_SecalotPersoDisplaySeedDialog(object):
     def setupUi(self, SecalotPersoDisplaySeedDialog):
         SecalotPersoDisplaySeedDialog.setObjectName("SecalotPersoDisplaySeedDialog")
-        SecalotPersoDisplaySeedDialog.resize(587, 313)
+        SecalotPersoDisplaySeedDialog.resize(627, 362)
+        sizePolicy = QtWidgets.QSizePolicy(QtWidgets.QSizePolicy.Minimum, QtWidgets.QSizePolicy.Minimum)
+        sizePolicy.setHorizontalStretch(0)
+        sizePolicy.setVerticalStretch(0)
+        sizePolicy.setHeightForWidth(SecalotPersoDisplaySeedDialog.sizePolicy().hasHeightForWidth())
+        SecalotPersoDisplaySeedDialog.setSizePolicy(sizePolicy)
         SecalotPersoDisplaySeedDialog.setModal(True)
         self.verticalLayout = QtWidgets.QVBoxLayout(SecalotPersoDisplaySeedDialog)
         self.verticalLayout.setObjectName("verticalLayout")
-        self.HeaderLabel = QtWidgets.QLabel(SecalotPersoDisplaySeedDialog)
-        sizePolicy = QtWidgets.QSizePolicy(QtWidgets.QSizePolicy.Expanding, QtWidgets.QSizePolicy.Expanding)
+        self.label = QtWidgets.QLabel(SecalotPersoDisplaySeedDialog)
+        sizePolicy = QtWidgets.QSizePolicy(QtWidgets.QSizePolicy.MinimumExpanding, QtWidgets.QSizePolicy.Minimum)
         sizePolicy.setHorizontalStretch(0)
         sizePolicy.setVerticalStretch(0)
-        sizePolicy.setHeightForWidth(self.HeaderLabel.sizePolicy().hasHeightForWidth())
-        self.HeaderLabel.setSizePolicy(sizePolicy)
-        self.HeaderLabel.setWordWrap(True)
-        self.HeaderLabel.setObjectName("HeaderLabel")
-        self.verticalLayout.addWidget(self.HeaderLabel)
+        sizePolicy.setHeightForWidth(self.label.sizePolicy().hasHeightForWidth())
+        self.label.setSizePolicy(sizePolicy)
+        font = QtGui.QFont()
+        font.setBold(True)
+        font.setWeight(75)
+        self.label.setFont(font)
+        self.label.setTextFormat(QtCore.Qt.PlainText)
+        self.label.setWordWrap(True)
+        self.label.setObjectName("label")
+        self.verticalLayout.addWidget(self.label)
         self.SeedTextBrowser = QtWidgets.QTextBrowser(SecalotPersoDisplaySeedDialog)
+        sizePolicy = QtWidgets.QSizePolicy(QtWidgets.QSizePolicy.MinimumExpanding, QtWidgets.QSizePolicy.MinimumExpanding)
+        sizePolicy.setHorizontalStretch(0)
+        sizePolicy.setVerticalStretch(0)
+        sizePolicy.setHeightForWidth(self.SeedTextBrowser.sizePolicy().hasHeightForWidth())
+        self.SeedTextBrowser.setSizePolicy(sizePolicy)
         self.SeedTextBrowser.setObjectName("SeedTextBrowser")
         self.verticalLayout.addWidget(self.SeedTextBrowser)
         self.SeedDialogButtonBox = QtWidgets.QDialogButtonBox(SecalotPersoDisplaySeedDialog)
@@ -41,5 +56,10 @@ class Ui_SecalotPersoDisplaySeedDialog(object):
     def retranslateUi(self, SecalotPersoDisplaySeedDialog):
         _translate = QtCore.QCoreApplication.translate
         SecalotPersoDisplaySeedDialog.setWindowTitle(_translate("SecalotPersoDisplaySeedDialog", "New wallet created"))
-        self.HeaderLabel.setText(_translate("SecalotPersoDisplaySeedDialog", "<html><head/><body><p><span style=\" font-size:10pt;\">Your new wallet is created. Your new wallet\'s seed is written below. Please save it in a safe place, so you would be able to restore your wallet in case your Secalot device gets stolen or damaged.</span></p><p><span style=\" font-size:10pt;\">Please note that</span></p><p><span style=\" font-size:10pt;\">1. Anybody getting access to your seed would have access to you wallet and all the bitcoins on it.</span></p><p><span style=\" font-size:10pt;\">2. It is safer to store your seed in a non-electronic form, for example on paper.</span></p><p><br/></p></body></html>"))
+        self.label.setText(_translate("SecalotPersoDisplaySeedDialog", "Your new wallet is created. Your new wallet\'s seed is written below. Please save it in a safe place, so you would be able to restore your wallet in case your Secalot device gets stolen or damaged.\n"
+"\n"
+"Please note that:\n"
+"1. Anybody getting access to your seed would have access to you wallet and all the bitcoins on it.\n"
+"2. It is safer to store your seed in a non-electronic form, for example on paper.\n"
+""))
 

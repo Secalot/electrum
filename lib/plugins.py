@@ -508,10 +508,13 @@ class DeviceMgr(ThreadJob, PrintError):
         devices = []
         for d in hid_list:
             product_key = (d['vendor_id'], d['product_id'])
-            product_key_with_usage_page = (d['vendor_id'], d['product_id'], d['usage_page'])
 
-            if product_key_with_usage_page in self.recognised_hardware:
-                product_key = product_key_with_usage_page
+            for device in self.recognised_hardware:
+                if len(device) == 4:
+                    if device[0] == d['vendor_id'] and device[1] == d['product_id']:
+                        if device[2] == d['interface_number'] or device[3] == d['usage_page']:
+                            product_key = device
+                            break
 
             if product_key in self.recognised_hardware:
                 # Older versions of hid don't provide interface_number

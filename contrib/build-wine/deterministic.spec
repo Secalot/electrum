@@ -11,7 +11,7 @@ else:
     raise BaseException('no name')
 
 
-home = 'C:\\electrum\\'
+home = os.path.normpath(os.environ['ELECTRUM_HOME']) + '\\'
 
 # see https://github.com/pyinstaller/pyinstaller/issues/2005
 hiddenimports = []
@@ -47,6 +47,7 @@ a = Analysis([home+'electrum',
               home+'plugins/trezor/qt.py',
               home+'plugins/keepkey/qt.py',
               home+'plugins/ledger/qt.py',
+              home+'plugins/secalot/secalot.py'
               #home+'packages/requests/utils.py'
               ],
              datas=datas,
@@ -63,6 +64,10 @@ for d in a.datas:
 
 # hotfix for #3171 (pre-Win10 binaries)
 a.binaries = [x for x in a.binaries if not x[1].lower().startswith(r'c:\windows')]
+
+extraLibsPath = os.path.normpath(os.environ['SECALOT_LIBS'])
+ucrtLibPath = os.path.join(extraLibsPath, 'ucrt')
+a.binaries += Tree(ucrtLibPath, prefix='', typecode='BINARY' )
 
 pyz = PYZ(a.pure)
 exe = EXE(pyz,

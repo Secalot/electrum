@@ -8,6 +8,7 @@ import sys
 import platform
 import imp
 import argparse
+import shutil
 
 version = imp.load_source('version', 'lib/version.py')
 
@@ -31,6 +32,8 @@ if platform.system() in ['Linux', 'FreeBSD', 'DragonFly']:
         (os.path.join(usr_share, 'applications/'), ['electrum.desktop']),
         (os.path.join(usr_share, 'pixmaps/'), ['icons/electrum.png'])
     ]
+    
+shutil.copyfile('electrum', 'lib/electrum.py')
 
 setup(
     name="Electrum",
@@ -46,6 +49,7 @@ setup(
         'jsonrpclib-pelix',
         'PySocks>=1.6.6',
         'btchip_python',
+        'pyQt5',
     ],
     packages=[
         'electrum',
@@ -79,7 +83,10 @@ setup(
             'www/index.html',
             'wordlist/*.txt',
             'locale/*/LC_MESSAGES/electrum.mo',
-        ]
+        ],
+        'electrum_plugins': [
+            'secalot/wordlist/english.txt',
+        ]        
     },
     scripts=['electrum'],
     data_files=data_files,
@@ -88,5 +95,11 @@ setup(
     author_email="thomasv@electrum.org",
     license="MIT Licence",
     url="https://electrum.org",
-    long_description="""Lightweight Bitcoin Wallet"""
+    long_description="""Lightweight Bitcoin Wallet""",
+    
+    entry_points={
+        'gui_scripts': [
+           'electrum=electrum.electrum:main',
+        ],
+    },    
 )
