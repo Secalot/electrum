@@ -277,21 +277,36 @@ class Secalot_KeyStore(Hardware_KeyStore):
                 dongle.startUntrustedTransaction(True, inputIndex,
                                                             chipInputs, redeemScripts[inputIndex])
                 dongle.finalizeInputFull(txOutput)
-
                 while inputIndex < len(inputs):
-                    singleInput = [ chipInputs[inputIndex] ]
+                    singleInput = [chipInputs[inputIndex]]
                     dongle.startUntrustedTransaction(False, 0,
-                                                            singleInput, redeemScripts[inputIndex])
-                    inputSignature = dongle.untrustedHashSign(inputsPaths[inputIndex], lockTime=tx.locktime)
-                    inputSignature[0] = 0x30 # force for 1.4.9+
+                                                     singleInput, redeemScripts[inputIndex])
+                    try:
+                        inputSignature = dongle.untrustedHashSign(inputsPaths[inputIndex], lockTime=tx.locktime)
+                    except BTChipException as e:
+                        if e.sw == 0x6985:
+                            raise BaseException("Operation timed out. Please retry.")
+                        else:
+                            raise e
+
+                    inputSignature[0] = 0x30  # force for 1.4.9+
                     signatures.append(inputSignature)
                     inputIndex = inputIndex + 1
             else:
+
                 while inputIndex < len(inputs):
                     dongle.startUntrustedTransaction(firstTransaction, inputIndex,
                                                             chipInputs, redeemScripts[inputIndex])
+                    firstTransaction = False
                     dongle.finalizeInputFull(txOutput)
-                    inputSignature = dongle.untrustedHashSign(inputsPaths[inputIndex], '', lockTime=tx.locktime)
+                    try:
+                        inputSignature = dongle.untrustedHashSign(inputsPaths[inputIndex], '', lockTime=tx.locktime)
+                    except BTChipException as e:
+                        if e.sw == 0x6985:
+                            raise BaseException("Operation timed out. Please retry.")
+                        else:
+                            raise e
+
                     inputSignature[0] = 0x30 # force for 1.4.9+
                     signatures.append(inputSignature)
                     inputIndex = inputIndex + 1
