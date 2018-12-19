@@ -7,7 +7,6 @@ import PyQt5.QtCore as QtCore
 from electrum.i18n import _
 from .secalot import SecalotPlugin
 from ..hw_wallet.qt import QtHandlerBase, QtPluginBase
-from electrum_gui.qt.util import *
 
 from .secalotPerso import SecalotPersoMainDialog
 

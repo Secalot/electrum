@@ -8,9 +8,12 @@ import platform
 import imp
 import argparse
 import subprocess
+import shutil
 
 from setuptools import setup, find_packages
 from setuptools.command.install import install
+
+shutil.copyfile('run_electrum', 'electrum/run_electrum.py')
 
 with open('contrib/requirements/requirements.txt') as f:
     requirements = f.read().splitlines()
@@ -43,14 +46,6 @@ if platform.system() in ['Linux', 'FreeBSD', 'DragonFly']:
         (os.path.join(usr_share, icons_dirname), ['icons/electrum.png'])
     ]
 
-extras_require = {
-    'hardware': requirements_hw,
-    'fast': ['pycryptodomex'],
-    'gui': ['pyqt5'],
-}
-extras_require['full'] = [pkg for sublist in list(extras_require.values()) for pkg in sublist]
-
-
 class CustomInstallCommand(install):
     def run(self):
         install.run(self)
@@ -71,8 +66,7 @@ class CustomInstallCommand(install):
 setup(
     name="Electrum",
     version=version.ELECTRUM_VERSION,
-    install_requires=requirements,
-    extras_require=extras_require,
+    install_requires=requirements + requirements_hw + ['pyqt5'],
     packages=[
         'electrum',
         'electrum.gui',
@@ -89,7 +83,6 @@ setup(
             'locale/*/LC_MESSAGES/electrum.mo',
         ],
     },
-    scripts=['electrum/electrum'],
     data_files=data_files,
     description="Lightweight Bitcoin Wallet",
     author="Thomas Voegtlin",
@@ -100,4 +93,9 @@ setup(
     cmdclass={
         'install': CustomInstallCommand,
     },
+    entry_points={
+        'console_scripts': [
+           'electrum=electrum.run_electrum:main',
+        ],
+    },    
 )

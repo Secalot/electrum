@@ -324,7 +324,7 @@ def init_plugins(config, gui_name):
     return Plugins(config, is_local or is_android, gui_name)
 
 
-if __name__ == '__main__':
+def main():
     # The hook will only be used in the Qt GUI right now
     util.setup_thread_excepthook()
     # on macOS, delete Process Serial Number arg generated for apps launched in Finder
@@ -479,3 +479,6 @@ if __name__ == '__main__':
     elif result is not None:
         print_msg(json_encode(result))
     sys.exit(0)
+
+if __name__ == '__main__':
+    main()

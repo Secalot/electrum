@@ -11,7 +11,6 @@ from ..hw_wallet import HW_PluginBase
 from electrum.transaction import Transaction
 from electrum.util import bfh, bh2u
 
-from electrum_gui.qt import *
 
 from PyQt5.QtWidgets import QDialog
 
@@ -55,6 +54,13 @@ class Secalot_Client():
 
     def i4b(self, x):
         return pack('>I', x)
+
+    def has_usable_connection_with_device(self):
+        try:
+            self.dongleObject.getFirmwareVersion()
+        except BaseException:
+            return False
+        return True
 
     def get_xpub(self, bip32_path, xtype):
         if self.is_initialized() == False:
@@ -347,7 +353,7 @@ class SecalotPlugin(HW_PluginBase):
             client = Secalot_Client(client, device.path)
         return client
 
-    def setup_device(self, device_info, wizard):        
+    def setup_device(self, device_info, wizard, purpose):
         devmgr = self.device_manager()
         device_id = device_info.device.id_
         client = devmgr.client_by_id(device_id)
