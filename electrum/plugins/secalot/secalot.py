@@ -1,15 +1,15 @@
-from binascii import hexlify
 from struct import pack, unpack
 import hashlib
 
 
 from electrum import bitcoin
-from electrum.bitcoin import TYPE_ADDRESS, int_to_hex, var_int
+from electrum.bitcoin import int_to_hex, var_int
 from electrum.i18n import _
-from electrum.keystore import Hardware_KeyStore, parse_xpubkey
+from electrum.keystore import Hardware_KeyStore
 from ..hw_wallet import HW_PluginBase
 from electrum.transaction import Transaction
 from electrum.util import bfh, bh2u
+from electrum.base_wizard import ScriptTypeNotSupported
 
 
 from PyQt5.QtWidgets import QDialog
@@ -100,7 +100,7 @@ class Secalot_Client():
                 pinVerified = True
 
             if walletInitialized == False:
-               raise BaseException("Your Secalot device is wiped.")
+               raise Exception("Your Secalot device is wiped.")
 
             if pinVerified == False:
                 remaining_attempts = self.dongleObject.getVerifyPinRemainingAttempts()
@@ -116,11 +116,11 @@ class Secalot_Client():
                     self.dongleObject.verifyPin(pin)
                 except BTChipException as e:
                     if e.sw == 0x6982:
-                        raise BaseException("Invalid PIN.")
+                        raise Exception("Invalid PIN.")
                     elif e.sw == 0x6700:
-                        raise BaseException("Invalid PIN length.")
+                        raise Exception("Invalid PIN length.")
                     elif e.sw == 0x6983:
-                        raise BaseException("PIN blocked.")
+                        raise Exception("PIN blocked.")
                     else:
                         raise e
 
@@ -149,7 +149,7 @@ class Secalot_KeyStore(Hardware_KeyStore):
         return self.plugin.get_client(self)
 
     def decrypt_message(self, pubkey, message, password):
-        raise RuntimeError(_('Encryption and decryption are currently not supported for %s') % self.device)
+        raise RuntimeError(_('Encryption and decryption are currently not supported for {}').format(self.device))
 
     def sign_message(self, sequence, message, password):
         client = self.get_client()
@@ -158,7 +158,7 @@ class Secalot_KeyStore(Hardware_KeyStore):
         address_path = self.get_derivation()[2:] + "/%d/%d"%sequence
 
         if len(message) == 0:
-            raise BaseException("Can not sign a zero length message")
+            raise Exception("Can not sign a zero length message")
 
         try:
             dongle.signMessagePrepare(address_path, bytearray(message, 'utf8'))
@@ -166,9 +166,9 @@ class Secalot_KeyStore(Hardware_KeyStore):
             signature = dongle.signMessageSign()
         except BTChipException as e:
             if e.sw == 0x6985:
-                raise BaseException("Operation timed out. Please retry.")
+                raise Exception("Operation timed out. Please retry.")
             if e.sw == 0x6a80:
-                raise BaseException("Unfortunately, this message cannot be signed. Only alphanumerical messages shorter than 140 characters are supported. Please remove any extra characters (tab, carriage return) and retry.")
+                raise Exception("Unfortunately, this message cannot be signed. Only alphanumerical messages shorter than 140 characters are supported. Please remove any extra characters (tab, carriage return) and retry.")
             else:
                 raise e
         finally:
@@ -208,7 +208,7 @@ class Secalot_KeyStore(Hardware_KeyStore):
         derivations = self.get_tx_derivations(tx)
         for txin in tx.inputs():
             if txin['type'] == 'coinbase':
-                raise BaseException("Coinbase not supported")     # should never happen
+                raise Exception("Coinbase not supported")     # should never happen
 
             if txin['type'] in ['p2sh']:
                 p2shTransaction = True
@@ -227,10 +227,20 @@ class Secalot_KeyStore(Hardware_KeyStore):
                     hwAddress = "%s/%d/%d" % (self.get_derivation()[2:], s[0], s[1])
                     break
             else:
-                raise BaseException("No matching x_key for sign_transaction") # should never happen
+                raise Exception("No matching x_key for sign_transaction") # should never happen
 
             redeemScript = Transaction.get_preimage_script(txin)
-            inputs.append([txin['prev_tx'].raw, txin['prevout_n'], redeemScript, txin['prevout_hash'], signingPos, txin.get('sequence', 0xffffffff - 1) ])
+            txin_prev_tx = txin.get('prev_tx')
+            if txin_prev_tx is None and not Transaction.is_segwit_input(txin):
+                raise Exception(_('Offline signing with {} is not supported for legacy inputs.').format(self.device))
+            txin_prev_tx_raw = txin_prev_tx.raw if txin_prev_tx else None
+            inputs.append([txin_prev_tx_raw,
+                           txin['prevout_n'],
+                           redeemScript,
+                           txin['prevout_hash'],
+                           signingPos,
+                           txin.get('sequence', 0xffffffff - 1),
+                           txin.get('value')])
             inputsPaths.append(hwAddress)
             pubKeys.append(pubkeys)
 
@@ -238,7 +248,7 @@ class Secalot_KeyStore(Hardware_KeyStore):
         if p2shTransaction:
             for txin in tx.inputs():
                 if txin['type'] != 'p2sh':
-                    raise BaseException("P2SH / regular input mixed in same transaction not supported") # should never happen
+                    raise Exception("P2SH / regular input mixed in same transaction not supported") # should never happen
 
         txOutput = var_int(len(tx.outputs()))
         for txout in tx.outputs():
@@ -256,10 +266,9 @@ class Secalot_KeyStore(Hardware_KeyStore):
             for utxo in inputs:
                 sequence = int_to_hex(utxo[5], 4)
                 if segwitTransaction:
-                    txtmp = bitcoinTransaction(bfh(utxo[0]))
                     tmp = bfh(utxo[3])[::-1]
                     tmp += bfh(int_to_hex(utxo[1], 4))
-                    tmp += txtmp.outputs[utxo[1]].amount
+                    tmp += bfh(int_to_hex(utxo[6], 8))  # txin['value']
                     chipInputs.append({'value' : tmp, 'witness' : True, 'sequence' : sequence})
                     redeemScripts.append(bfh(utxo[2]))
                 elif not p2shTransaction:
@@ -291,7 +300,7 @@ class Secalot_KeyStore(Hardware_KeyStore):
                         inputSignature = dongle.untrustedHashSign(inputsPaths[inputIndex], lockTime=tx.locktime)
                     except BTChipException as e:
                         if e.sw == 0x6985:
-                            raise BaseException("Operation timed out. Please retry.")
+                            raise Exception("Operation timed out. Please retry.")
                         else:
                             raise e
 
@@ -309,7 +318,7 @@ class Secalot_KeyStore(Hardware_KeyStore):
                         inputSignature = dongle.untrustedHashSign(inputsPaths[inputIndex], '', lockTime=tx.locktime)
                     except BTChipException as e:
                         if e.sw == 0x6985:
-                            raise BaseException("Operation timed out. Please retry.")
+                            raise Exception("Operation timed out. Please retry.")
                         else:
                             raise e
 
@@ -322,7 +331,7 @@ class Secalot_KeyStore(Hardware_KeyStore):
 
         for i, txin in enumerate(tx.inputs()):
             signingPos = inputs[i][4]
-            txin['signatures'][signingPos] = bh2u(signatures[i])
+            tx.add_signature_to_txin(i, signingPos, bh2u(signatures[i]))
         tx.raw = tx.serialize()
 
 
@@ -333,6 +342,8 @@ class SecalotPlugin(HW_PluginBase):
     DEVICE_IDS = [ 
                    (0x1209, 0x7000, 0x03, 0xff00),
                  ]
+
+    SUPPORTED_XTYPES = ('standard', 'p2wpkh-p2sh', 'p2wsh-p2sh')
 
     def __init__(self, parent, config, name):
         HW_PluginBase.__init__(self, parent, config, name)
@@ -346,7 +357,8 @@ class SecalotPlugin(HW_PluginBase):
         return HIDDongleHIDAPI(dev, True, False)
 
     def create_client(self, device, handler):
-        self.handler = handler
+        if handler:
+            self.handler = handler
 
         client = self.get_secalot_device(device.path)
         if client != None:
@@ -357,15 +369,20 @@ class SecalotPlugin(HW_PluginBase):
         devmgr = self.device_manager()
         device_id = device_info.device.id_
         client = devmgr.client_by_id(device_id)
+        if client is None:
+            raise Exception(_('Failed to create a client for this device.') + '\n' +
+                            _('Make sure it is in the correct state.'))
         client.handler = self.create_handler(wizard)
 
         if client.is_initialized() == False:
             persoResult = client.handler.perso_dialog(client.dongleObject)
 
             if persoResult == QDialog.Rejected:
-                raise BaseException("Canceled by user")
+                raise Exception("Canceled by user")
 
     def get_xpub(self, device_id, derivation, xtype, wizard):
+        if xtype not in self.SUPPORTED_XTYPES:
+            raise ScriptTypeNotSupported(_('This type of script is not supported with {}.').format(self.device))
         devmgr = self.device_manager()
         client = devmgr.client_by_id(device_id)
         client.handler = self.create_handler(wizard)
