@@ -1,3 +1,48 @@
+# Release 3.3.2 - (December 21, 2018)
+
+ * Fix Qt history export bug
+ * Improve network timeouts
+
+
+# Release 3.3.1 - (December 20, 2018)
+
+ * Qt: Fix invoices tab crash (#4941)
+ * Android: Minor GUI improvements
+
+
+# Release 3.3.0 - Hodler's Edition (December 19, 2018)
+
+ * The network layer has been rewritten using asyncio and aiorpcx.
+   In addition to easier maintenance, this makes the client
+   more robust against misbehaving servers.
+ * The minimum python version was increased to 3.6
+ * The blockchain headers and fork handling logic has been generalized.
+   Clients by default now follow chain based on most work, not length.
+ * New wallet creation defaults to native segwit (bech32).
+ * Segwit 2FA: TrustedCoin now supports native segwit p2wsh
+   two-factor wallets.
+ * RBF batching (opt-in): If the wallet has an unconfirmed RBF
+   transaction, new payments will be added to that transaction,
+   instead of creating new transactions.
+ * MacOS: support QR code scanner in binaries.
+ * Android APK:
+   - build using Google NDK instead of Crystax NDK
+   - target API 28
+   - do not use external storage (previously for block headers)
+ * hardware wallets:
+   - Coldcard now supports spending from p2wpkh-p2sh,
+     fixed p2pkh signing for fw 1.1.0
+   - Archos Safe-T mini: fix #4726 signing issue
+   - KeepKey: full segwit support
+   - Trezor: refactoring and compat with python-trezor 0.11
+   - Digital BitBox: support firmware v5.0.0
+ * fix bitcoin URI handling when app already running (#4796)
+ * Qt listings rewritten:
+   the History tab now uses QAbstractItemModel, the other tabs use
+   QStandardItemModel. Performance should be better for large wallets.
+ * Several other minor bugfixes and usability improvements.
+
+
 # Release 3.2.3 - (September 3, 2018)
 
  * hardware wallet: the Safe-T mini from Archos is now supported.
@@ -223,7 +268,7 @@ issue #3374. Users should upgrade to 3.0.5.
   * Qt GUI: sweeping now uses the Send tab, allowing fees to be set
   * Windows: if using the installer binary, there is now a separate shortcut
     for "Electrum Testnet"
-  * Digital Bitbox: added suport for p2sh-segwit
+  * Digital Bitbox: added support for p2sh-segwit
   * OS notifications for incoming transactions
   * better transaction size estimation:
     - fees for segwit txns were somewhat underestimated (#3347)
@@ -451,7 +496,7 @@ issue #3374. Users should upgrade to 3.0.5.
 
 # Release 2.7.7
   * Fix utf8 encoding bug with old wallet seeds (issue #1967)
-  * Fix delete request from menu (isue #1968)
+  * Fix delete request from menu (issue #1968)
 
 # Release 2.7.6
  * Fixes a critical bug with imported private keys (issue #1966). Keys
@@ -814,7 +859,7 @@ issue #3374. Users should upgrade to 3.0.5.
  * New 'Receive' tab in the GUI:
    - create and manage payment requests, with QR Codes
    - the former 'Receive' tab was renamed to 'Addresses'
-   - the former Point of Sale plugin is replaced by a resizeable
+   - the former Point of Sale plugin is replaced by a resizable
      window that pops up if you click on the QR code
 
  * The 'Send' tab in the Qt GUI supports transactions with multiple
@@ -837,7 +882,7 @@ issue #3374. Users should upgrade to 3.0.5.
 
  * The client accepts servers with a CA-signed SSL certificate.
 
- * ECIES encrypt/decrypt methods, availabe in the GUI and using
+ * ECIES encrypt/decrypt methods, available in the GUI and using
    the command line:
       encrypt <pubkey> <message>
       decrypt <pubkey> <message>
@@ -910,7 +955,7 @@ bugfixes: connection problems, transactions staying unverified
 
 # Release 1.8.1
 
-* Notification option when receiving new tranactions
+* Notification option when receiving new transactions
 * Confirm dialogue before sending large amounts
 * Alternative datafile location for non-windows systems
 * Fix offline wallet creation

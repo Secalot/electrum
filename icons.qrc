@@ -32,15 +32,20 @@
     <file>icons/revealer_c.png</file>
     <file>icons/qrcode.png</file>
     <file>icons/qrcode_white.png</file>
+    <file>icons/camera_dark.png</file>
+    <file>icons/camera_white.png</file>
     <file>icons/preferences.png</file>
     <file>icons/safe-t_unpaired.png</file>
     <file>icons/safe-t.png</file>
     <file>icons/seed.png</file>
     <file>icons/status_connected.png</file>
+    <file>icons/status_connected_fork.png</file>
     <file>icons/status_connected_proxy.png</file>
+    <file>icons/status_connected_proxy_fork.png</file>
     <file>icons/status_disconnected.png</file>
     <file>icons/status_waiting.png</file>
     <file>icons/status_lagging.png</file>
+    <file>icons/status_lagging_fork.png</file>
     <file>icons/seal.png</file>
     <file>icons/tab_addresses.png</file>
     <file>icons/tab_coins.png</file>

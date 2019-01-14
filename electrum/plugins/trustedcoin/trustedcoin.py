@@ -22,17 +22,24 @@
 # ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN
 # CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 # SOFTWARE.
-
+import asyncio
 import socket
-import os
-import requests
 import json
 import base64
+import time
+import hashlib
+from collections import defaultdict
+from typing import Dict
+
 from urllib.parse import urljoin
 from urllib.parse import quote
+from aiohttp import ClientResponse
 
-from electrum import bitcoin, ecc, constants, keystore, version
-from electrum.bitcoin import *
+from electrum import ecc, constants, keystore, version, bip32, bitcoin
+from electrum.bitcoin import TYPE_ADDRESS, is_new_seed, seed_type, is_any_2fa_seed_type
+from electrum.bip32 import (deserialize_xpub, deserialize_xprv, bip32_private_key, CKD_pub,
+                            serialize_xpub, bip32_root, bip32_private_derivation, xpub_type)
+from electrum.crypto import sha256
 from electrum.transaction import TxOutput
 from electrum.mnemonic import Mnemonic
 from electrum.wallet import Multisig_Wallet, Deterministic_Wallet
@@ -40,13 +47,20 @@ from electrum.i18n import _
 from electrum.plugin import BasePlugin, hook
 from electrum.util import NotEnoughFunds
 from electrum.storage import STO_EV_USER_PW
+from electrum.network import Network
 
-# signing_xpub is hardcoded so that the wallet can be restored from seed, without TrustedCoin's server
-def get_signing_xpub():
-    if constants.net.TESTNET:
-        return "tpubD6NzVbkrYhZ4XdmyJQcCPjQfg6RXVUzGFhPjZ7uvRC8JLcS7Hw1i7UTpyhp9grHpak4TyK2hzBJrujDVLXQ6qB5tNpVx9rC6ixijUXadnmY"
+def get_signing_xpub(xtype):
+    if not constants.net.TESTNET:
+        xpub = "xpub661MyMwAqRbcGnMkaTx2594P9EDuiEqMq25PM2aeG6UmwzaohgA6uDmNsvSUV8ubqwA3Wpste1hg69XHgjUuCD5HLcEp2QPzyV1HMrPppsL"
     else:
-        return "xpub661MyMwAqRbcGnMkaTx2594P9EDuiEqMq25PM2aeG6UmwzaohgA6uDmNsvSUV8ubqwA3Wpste1hg69XHgjUuCD5HLcEp2QPzyV1HMrPppsL"
+        xpub = "tpubD6NzVbkrYhZ4XdmyJQcCPjQfg6RXVUzGFhPjZ7uvRC8JLcS7Hw1i7UTpyhp9grHpak4TyK2hzBJrujDVLXQ6qB5tNpVx9rC6ixijUXadnmY"
+    if xtype not in ('standard', 'p2wsh'):
+        raise NotImplementedError('xtype: {}'.format(xtype))
+    if xtype == 'standard':
+        return xpub
+    _, depth, fingerprint, child_number, c, cK = bip32.deserialize_xpub(xpub)
+    xpub = bip32.serialize_xpub(xtype, c, cK, depth, fingerprint, child_number)
+    return xpub
 
 def get_billing_xpub():
     if constants.net.TESTNET:
@@ -54,7 +68,6 @@ def get_billing_xpub():
     else:
         return "xpub6DTBdtBB8qUmH5c77v8qVGVoYk7WjJNpGvutqjLasNG1mbux6KsojaLrYf2sRhXAVU4NaFuHhbD9SvVPRt1MB1MaMooRuhHcAZH1yhQ1qDU"
 
-SEED_PREFIX = version.SEED_PREFIX_2FA
 
 DISCLAIMER = [
     _("Two-factor authentication is a service provided by TrustedCoin.  "
@@ -103,35 +116,40 @@ class TrustedCoinCosignerClient(object):
         self.debug = False
         self.user_agent = user_agent
 
+    async def handle_response(self, resp: ClientResponse):
+        if resp.status != 200:
+            try:
+                r = await resp.json()
+                message = r['message']
+            except:
+                message = await resp.text()
+            raise TrustedCoinException(message, resp.status)
+        try:
+            return await resp.json()
+        except:
+            return await resp.text()
+
     def send_request(self, method, relative_url, data=None):
-        kwargs = {'headers': {}}
-        if self.user_agent:
-            kwargs['headers']['user-agent'] = self.user_agent
-        if method == 'get' and data:
-            kwargs['params'] = data
-        elif method == 'post' and data:
-            kwargs['data'] = json.dumps(data)
-            kwargs['headers']['content-type'] = 'application/json'
+        network = Network.get_instance()
+        if not network:
+            raise ErrorConnectingServer('You are offline.')
         url = urljoin(self.base_url, relative_url)
         if self.debug:
             print('%s %s %s' % (method, url, data))
+        headers = {}
+        if self.user_agent:
+            headers['user-agent'] = self.user_agent
         try:
-            response = requests.request(method, url, **kwargs)
+            if method == 'get':
+                return Network.send_http_on_proxy(method, url, params=data, headers=headers, on_finish=self.handle_response)
+            elif method == 'post':
+                return Network.send_http_on_proxy(method, url, json=data, headers=headers, on_finish=self.handle_response)
+            else:
+                assert False
+        except TrustedCoinException:
+            raise
         except Exception as e:
             raise ErrorConnectingServer(e)
-        if self.debug:
-            print(response.text)
-        if response.status_code != 200:
-            message = str(response.text)
-            if response.headers.get('content-type') == 'application/json':
-                r = response.json()
-                if 'message' in r:
-                    message = r['message']
-            raise TrustedCoinException(message, response.status_code)
-        if response.headers.get('content-type') == 'application/json':
-            return response.json()
-        else:
-            return response.text
 
     def get_terms_of_service(self, billing_plan='electrum-per-tx-otp'):
         """
@@ -228,12 +246,18 @@ class Wallet_2fa(Multisig_Wallet):
         self._load_billing_addresses()
 
     def _load_billing_addresses(self):
-        billing_addresses = self.storage.get('trustedcoin_billing_addresses', {})
-        self._billing_addresses = {}  # index -> addr
-        # convert keys from str to int
-        for index, addr in list(billing_addresses.items()):
-            self._billing_addresses[int(index)] = addr
-        self._billing_addresses_set = set(self._billing_addresses.values())  # set of addrs
+        billing_addresses = {
+            'legacy': self.storage.get('trustedcoin_billing_addresses', {}),
+            'segwit': self.storage.get('trustedcoin_billing_addresses_segwit', {})
+        }
+        self._billing_addresses = {}  # type: Dict[str, Dict[int, str]]  # addr_type -> index -> addr
+        self._billing_addresses_set = set()  # set of addrs
+        for addr_type, d in list(billing_addresses.items()):
+            self._billing_addresses[addr_type] = {}
+            # convert keys from str to int
+            for index, addr in d.items():
+                self._billing_addresses[addr_type][int(index)] = addr
+                self._billing_addresses_set.add(addr)
 
     def can_sign_without_server(self):
         return not self.keystores['x2/'].is_watching_only()
@@ -273,7 +297,7 @@ class Wallet_2fa(Multisig_Wallet):
             self, coins, o, config, fixed_fee, change_addr)
         fee = self.extra_fee(config) if not is_sweep else 0
         if fee:
-            address = self.billing_info['billing_address']
+            address = self.billing_info['billing_address_segwit']
             fee_output = TxOutput(TYPE_ADDRESS, address, fee)
             try:
                 tx = mk_tx(outputs + [fee_output])
@@ -294,7 +318,7 @@ class Wallet_2fa(Multisig_Wallet):
             return
         otp = int(otp)
         long_user_id, short_id = self.get_user_id()
-        raw_tx = tx.serialize_to_network()
+        raw_tx = tx.serialize()
         r = server.sign(short_id, raw_tx, otp)
         if r:
             raw_tx = r.get('transaction')
@@ -304,8 +328,9 @@ class Wallet_2fa(Multisig_Wallet):
         self.billing_info = None
         self.plugin.start_request_thread(self)
 
-    def add_new_billing_address(self, billing_index: int, address: str):
-        saved_addr = self._billing_addresses.get(billing_index)
+    def add_new_billing_address(self, billing_index: int, address: str, addr_type: str):
+        billing_addresses_of_this_type = self._billing_addresses[addr_type]
+        saved_addr = billing_addresses_of_this_type.get(billing_index)
         if saved_addr is not None:
             if saved_addr == address:
                 return  # already saved this address
@@ -314,16 +339,18 @@ class Wallet_2fa(Multisig_Wallet):
                                 'for index {}, already saved {}, now got {}'
                                 .format(billing_index, saved_addr, address))
         # do we have all prior indices? (are we synced?)
-        largest_index_we_have = max(self._billing_addresses) if self._billing_addresses else -1
+        largest_index_we_have = max(billing_addresses_of_this_type) if billing_addresses_of_this_type else -1
         if largest_index_we_have + 1 < billing_index:  # need to sync
             for i in range(largest_index_we_have + 1, billing_index):
-                addr = make_billing_address(self, i)
-                self._billing_addresses[i] = addr
+                addr = make_billing_address(self, i, addr_type=addr_type)
+                billing_addresses_of_this_type[i] = addr
                 self._billing_addresses_set.add(addr)
         # save this address; and persist to disk
-        self._billing_addresses[billing_index] = address
+        billing_addresses_of_this_type[billing_index] = address
         self._billing_addresses_set.add(address)
-        self.storage.put('trustedcoin_billing_addresses', self._billing_addresses)
+        self._billing_addresses[addr_type] = billing_addresses_of_this_type
+        self.storage.put('trustedcoin_billing_addresses', self._billing_addresses['legacy'])
+        self.storage.put('trustedcoin_billing_addresses_segwit', self._billing_addresses['segwit'])
         # FIXME this often runs in a daemon thread, where storage.write will fail
         self.storage.write()
 
@@ -335,7 +362,7 @@ class Wallet_2fa(Multisig_Wallet):
 
 def get_user_id(storage):
     def make_long_id(xpub_hot, xpub_cold):
-        return bitcoin.sha256(''.join(sorted([xpub_hot, xpub_cold])))
+        return sha256(''.join(sorted([xpub_hot, xpub_cold])))
     xpub1 = storage.get('x1/')['xpub']
     xpub2 = storage.get('x2/')['xpub']
     long_id = make_long_id(xpub1, xpub2)
@@ -344,15 +371,20 @@ def get_user_id(storage):
 
 def make_xpub(xpub, s):
     version, _, _, _, c, cK = deserialize_xpub(xpub)
-    cK2, c2 = bitcoin._CKD_pub(cK, c, s)
-    return bitcoin.serialize_xpub(version, c2, cK2)
+    cK2, c2 = bip32._CKD_pub(cK, c, s)
+    return serialize_xpub(version, c2, cK2)
 
-def make_billing_address(wallet, num):
+def make_billing_address(wallet, num, addr_type):
     long_id, short_id = wallet.get_user_id()
     xpub = make_xpub(get_billing_xpub(), long_id)
     version, _, _, _, c, cK = deserialize_xpub(xpub)
-    cK, c = bitcoin.CKD_pub(cK, c, num)
-    return bitcoin.public_key_to_p2pkh(cK)
+    cK, c = CKD_pub(cK, c, num)
+    if addr_type == 'legacy':
+        return bitcoin.public_key_to_p2pkh(cK)
+    elif addr_type == 'segwit':
+        return bitcoin.public_key_to_p2wpkh(cK)
+    else:
+        raise ValueError(f'unexpected billing type: {addr_type}')
 
 
 class TrustedCoinPlugin(BasePlugin):
@@ -366,7 +398,8 @@ class TrustedCoinPlugin(BasePlugin):
 
     @staticmethod
     def is_valid_seed(seed):
-        return bitcoin.is_new_seed(seed, SEED_PREFIX)
+        t = seed_type(seed)
+        return is_any_2fa_seed_type(t)
 
     def is_available(self):
         return True
@@ -409,21 +442,26 @@ class TrustedCoinPlugin(BasePlugin):
         return f
 
     @finish_requesting
-    def request_billing_info(self, wallet):
+    def request_billing_info(self, wallet: 'Wallet_2fa'):
         if wallet.can_sign_without_server():
             return
         self.print_error("request billing info")
         try:
             billing_info = server.get(wallet.get_user_id()[1])
         except ErrorConnectingServer as e:
-            self.print_error('cannot connect to TrustedCoin server: {}'.format(e))
+            self.print_error('cannot connect to TrustedCoin server: {}'.format(repr(e)))
             return
         billing_index = billing_info['billing_index']
-        billing_address = make_billing_address(wallet, billing_index)
-        if billing_address != billing_info['billing_address']:
-            raise Exception('unexpected trustedcoin billing address: expected {}, received {}'
-                            .format(billing_address, billing_info['billing_address']))
-        wallet.add_new_billing_address(billing_index, billing_address)
+        # add segwit billing address; this will be used for actual billing
+        billing_address = make_billing_address(wallet, billing_index, addr_type='segwit')
+        if billing_address != billing_info['billing_address_segwit']:
+            raise Exception(f'unexpected trustedcoin billing address: '
+                            f'calculated {billing_address}, received {billing_info["billing_address_segwit"]}')
+        wallet.add_new_billing_address(billing_index, billing_address, addr_type='segwit')
+        # also add legacy billing address; only used for detecting past payments in GUI
+        billing_address = make_billing_address(wallet, billing_index, addr_type='legacy')
+        wallet.add_new_billing_address(billing_index, billing_address, addr_type='legacy')
+
         wallet.billing_info = billing_info
         wallet.price_per_tx = dict(billing_info['price_per_tx'])
         wallet.price_per_tx.pop(1, None)
@@ -438,8 +476,10 @@ class TrustedCoinPlugin(BasePlugin):
             t.start()
             return t
 
-    def make_seed(self):
-        return Mnemonic('english').make_seed(seed_type='2fa', num_bits=128)
+    def make_seed(self, seed_type):
+        if not is_any_2fa_seed_type(seed_type):
+            raise BaseException('unexpected seed type: {}'.format(seed_type))
+        return Mnemonic('english').make_seed(seed_type=seed_type, num_bits=128)
 
     @hook
     def do_clear(self, window):
@@ -454,27 +494,40 @@ class TrustedCoinPlugin(BasePlugin):
         title = _('Create or restore')
         message = _('Do you want to create a new seed, or to restore a wallet using an existing seed?')
         choices = [
-            ('create_seed', _('Create a new seed')),
+            ('choose_seed_type', _('Create a new seed')),
             ('restore_wallet', _('I already have a seed')),
         ]
         wizard.choice_dialog(title=title, message=message, choices=choices, run_next=wizard.run)
 
-    def create_seed(self, wizard):
-        seed = self.make_seed()
+    def choose_seed_type(self, wizard):
+        choices = [
+            ('create_2fa_segwit_seed', _('Segwit 2FA')),
+            ('create_2fa_seed', _('Legacy 2FA')),
+        ]
+        wizard.choose_seed_type(choices=choices)
+
+    def create_2fa_seed(self, wizard): self.create_seed(wizard, '2fa')
+    def create_2fa_segwit_seed(self, wizard): self.create_seed(wizard, '2fa_segwit')
+
+    def create_seed(self, wizard, seed_type):
+        seed = self.make_seed(seed_type)
         f = lambda x: wizard.request_passphrase(seed, x)
         wizard.show_seed_dialog(run_next=f, seed_text=seed)
 
     @classmethod
-    def get_xkeys(self, seed, passphrase, derivation):
-        from electrum.mnemonic import Mnemonic
-        from electrum.keystore import bip32_root, bip32_private_derivation
+    def get_xkeys(self, seed, t, passphrase, derivation):
+        assert is_any_2fa_seed_type(t)
+        xtype = 'standard' if t == '2fa' else 'p2wsh'
         bip32_seed = Mnemonic.mnemonic_to_seed(seed, passphrase)
-        xprv, xpub = bip32_root(bip32_seed, 'standard')
+        xprv, xpub = bip32_root(bip32_seed, xtype)
         xprv, xpub = bip32_private_derivation(xprv, "m/", derivation)
         return xprv, xpub
 
     @classmethod
     def xkeys_from_seed(self, seed, passphrase):
+        t = seed_type(seed)
+        if not is_any_2fa_seed_type(t):
+            raise BaseException('unexpected seed type: {}'.format(t))
         words = seed.split()
         n = len(words)
         # old version use long seed phrases
@@ -484,11 +537,11 @@ class TrustedCoinPlugin(BasePlugin):
             # the probability of it being < 20 words is about 2^(-(256+12-19*11)) = 2^(-59)
             if passphrase != '':
                 raise Exception('old 2fa seed cannot have passphrase')
-            xprv1, xpub1 = self.get_xkeys(' '.join(words[0:12]), '', "m/")
-            xprv2, xpub2 = self.get_xkeys(' '.join(words[12:]), '', "m/")
-        elif n==12:
-            xprv1, xpub1 = self.get_xkeys(seed, passphrase, "m/0'/")
-            xprv2, xpub2 = self.get_xkeys(seed, passphrase, "m/1'/")
+            xprv1, xpub1 = self.get_xkeys(' '.join(words[0:12]), t, '', "m/")
+            xprv2, xpub2 = self.get_xkeys(' '.join(words[12:]), t, '', "m/")
+        elif not t == '2fa' or n == 12:
+            xprv1, xpub1 = self.get_xkeys(seed, t, passphrase, "m/0'/")
+            xprv2, xpub2 = self.get_xkeys(seed, t, passphrase, "m/1'/")
         else:
             raise Exception('unrecognized seed length: {} words'.format(n))
         return xprv1, xpub1, xprv2, xpub2
@@ -552,7 +605,8 @@ class TrustedCoinPlugin(BasePlugin):
         storage.put('x1/', k1.dump())
         storage.put('x2/', k2.dump())
         long_user_id, short_id = get_user_id(storage)
-        xpub3 = make_xpub(get_signing_xpub(), long_user_id)
+        xtype = xpub_type(xpub1)
+        xpub3 = make_xpub(get_signing_xpub(xtype), long_user_id)
         k3 = keystore.from_xpub(xpub3)
         storage.put('x3/', k3.dump())
 
@@ -569,7 +623,8 @@ class TrustedCoinPlugin(BasePlugin):
         xpub2 = wizard.storage.get('x2/')['xpub']
         # Generate third key deterministically.
         long_user_id, short_id = get_user_id(wizard.storage)
-        xpub3 = make_xpub(get_signing_xpub(), long_user_id)
+        xtype = xpub_type(xpub1)
+        xpub3 = make_xpub(get_signing_xpub(xtype), long_user_id)
         # secret must be sent by the server
         try:
             r = server.create(xpub1, xpub2, email)

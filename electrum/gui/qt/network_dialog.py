@@ -31,9 +31,10 @@ from PyQt5.QtWidgets import *
 import PyQt5.QtCore as QtCore
 
 from electrum.i18n import _
-from electrum import constants
+from electrum import constants, blockchain
 from electrum.util import print_error
-from electrum.network import serialize_server, deserialize_server
+from electrum.interface import serialize_server, deserialize_server
+from electrum.network import Network
 
 from .util import *
 
@@ -52,7 +53,7 @@ class NetworkDialog(QDialog):
         vbox.addLayout(Buttons(CloseButton(self)))
         self.network_updated_signal_obj.network_updated_signal.connect(
             self.on_update)
-        network.register_callback(self.on_network, ['updated', 'interfaces'])
+        network.register_callback(self.on_network, ['network_updated'])
 
     def on_network(self, event, *args):
         self.network_updated_signal_obj.network_updated_signal.emit(event, args)
@@ -81,8 +82,8 @@ class NodesListWidget(QTreeWidget):
             server = item.data(1, Qt.UserRole)
             menu.addAction(_("Use as server"), lambda: self.parent.follow_server(server))
         else:
-            index = item.data(1, Qt.UserRole)
-            menu.addAction(_("Follow this branch"), lambda: self.parent.follow_branch(index))
+            chain_id = item.data(1, Qt.UserRole)
+            menu.addAction(_("Follow this branch"), lambda: self.parent.follow_branch(chain_id))
         menu.exec_(self.viewport().mapToGlobal(position))
 
     def keyPressEvent(self, event):
@@ -97,27 +98,28 @@ class NodesListWidget(QTreeWidget):
         pt.setX(50)
         self.customContextMenuRequested.emit(pt)
 
-    def update(self, network):
+    def update(self, network: Network):
         self.clear()
         self.addChild = self.addTopLevelItem
         chains = network.get_blockchains()
         n_chains = len(chains)
-        for k, items in chains.items():
-            b = network.blockchains[k]
+        for chain_id, interfaces in chains.items():
+            b = blockchain.blockchains.get(chain_id)
+            if b is None: continue
             name = b.get_name()
-            if n_chains >1:
-                x = QTreeWidgetItem([name + '@%d'%b.get_forkpoint(), '%d'%b.height()])
+            if n_chains > 1:
+                x = QTreeWidgetItem([name + '@%d'%b.get_max_forkpoint(), '%d'%b.height()])
                 x.setData(0, Qt.UserRole, 1)
-                x.setData(1, Qt.UserRole, b.forkpoint)
+                x.setData(1, Qt.UserRole, b.get_id())
             else:
                 x = self
-            for i in items:
+            for i in interfaces:
                 star = ' *' if i == network.interface else ''
                 item = QTreeWidgetItem([i.host + star, '%d'%i.tip])
                 item.setData(0, Qt.UserRole, 0)
                 item.setData(1, Qt.UserRole, i.server)
                 x.addChild(item)
-            if n_chains>1:
+            if n_chains > 1:
                 self.addTopLevelItem(x)
                 x.setExpanded(True)
 
@@ -125,6 +127,8 @@ class NodesListWidget(QTreeWidget):
         h.setStretchLastSection(False)
         h.setSectionResizeMode(0, QHeaderView.Stretch)
         h.setSectionResizeMode(1, QHeaderView.ResizeToContents)
+
+        super().update()
 
 
 class ServerListWidget(QTreeWidget):
@@ -180,10 +184,12 @@ class ServerListWidget(QTreeWidget):
         h.setSectionResizeMode(0, QHeaderView.Stretch)
         h.setSectionResizeMode(1, QHeaderView.ResizeToContents)
 
+        super().update()
+
 
 class NetworkChoiceLayout(object):
 
-    def __init__(self, network, config, wizard=False):
+    def __init__(self, network: Network, config, wizard=False):
         self.network = network
         self.config = config
         self.protocol = None
@@ -239,7 +245,7 @@ class NetworkChoiceLayout(object):
         self.proxy_cb.clicked.connect(self.set_proxy)
 
         self.proxy_mode = QComboBox()
-        self.proxy_mode.addItems(['SOCKS4', 'SOCKS5', 'HTTP'])
+        self.proxy_mode.addItems(['SOCKS4', 'SOCKS5'])
         self.proxy_host = QLineEdit()
         self.proxy_host.setFixedWidth(200)
         self.proxy_port = QLineEdit()
@@ -335,9 +341,11 @@ class NetworkChoiceLayout(object):
                 w.setEnabled(False)
 
     def update(self):
-        host, port, protocol, proxy_config, auto_connect = self.network.get_parameters()
+        net_params = self.network.get_parameters()
+        host, port, protocol = net_params.host, net_params.port, net_params.protocol
+        proxy_config, auto_connect = net_params.proxy, net_params.auto_connect
         self.server_host.setText(host)
-        self.server_port.setText(port)
+        self.server_port.setText(str(port))
         self.autoconnect_cb.setChecked(auto_connect)
 
         interface = self.network.interface
@@ -355,9 +363,9 @@ class NetworkChoiceLayout(object):
         status = _("Connected to {0} nodes.").format(n) if n else _("Not connected")
         self.status_label.setText(status)
         chains = self.network.get_blockchains()
-        if len(chains)>1:
+        if len(chains) > 1:
             chain = self.network.blockchain()
-            forkpoint = chain.get_forkpoint()
+            forkpoint = chain.get_max_forkpoint()
             name = chain.get_name()
             msg = _('Chain split detected at block {0}').format(forkpoint) + '\n'
             msg += (_('You are following branch') if auto_connect else _('Your server is on branch'))+ ' ' + name
@@ -368,7 +376,7 @@ class NetworkChoiceLayout(object):
         self.nodes_list_widget.update(self.network)
 
     def fill_in_proxy_settings(self):
-        host, port, protocol, proxy_config, auto_connect = self.network.get_parameters()
+        proxy_config = self.network.get_parameters().proxy
         if not proxy_config:
             proxy_config = {"mode": "none", "host": "localhost", "port": "9050"}
 
@@ -403,15 +411,12 @@ class NetworkChoiceLayout(object):
         self.set_protocol(p)
         self.set_server()
 
-    def follow_branch(self, index):
-        self.network.follow_chain(index)
+    def follow_branch(self, chain_id):
+        self.network.run_from_another_thread(self.network.follow_chain_given_id(chain_id))
         self.update()
 
     def follow_server(self, server):
-        self.network.switch_to_interface(server)
-        host, port, protocol, proxy, auto_connect = self.network.get_parameters()
-        host, port, protocol = deserialize_server(server)
-        self.network.set_parameters(host, port, protocol, proxy, auto_connect)
+        self.network.run_from_another_thread(self.network.follow_chain_given_server(server))
         self.update()
 
     def server_changed(self, x):
@@ -440,14 +445,14 @@ class NetworkChoiceLayout(object):
         pass
 
     def set_server(self):
-        host, port, protocol, proxy, auto_connect = self.network.get_parameters()
-        host = str(self.server_host.text())
-        port = str(self.server_port.text())
-        auto_connect = self.autoconnect_cb.isChecked()
-        self.network.set_parameters(host, port, protocol, proxy, auto_connect)
+        net_params = self.network.get_parameters()
+        net_params = net_params._replace(host=str(self.server_host.text()),
+                                         port=str(self.server_port.text()),
+                                         auto_connect=self.autoconnect_cb.isChecked())
+        self.network.run_from_another_thread(self.network.set_parameters(net_params))
 
     def set_proxy(self):
-        host, port, protocol, proxy, auto_connect = self.network.get_parameters()
+        net_params = self.network.get_parameters()
         if self.proxy_cb.isChecked():
             proxy = { 'mode':str(self.proxy_mode.currentText()).lower(),
                       'host':str(self.proxy_host.text()),
@@ -457,7 +462,8 @@ class NetworkChoiceLayout(object):
         else:
             proxy = None
             self.tor_cb.setChecked(False)
-        self.network.set_parameters(host, port, protocol, proxy, auto_connect)
+        net_params = net_params._replace(proxy=proxy)
+        self.network.run_from_another_thread(self.network.set_parameters(net_params))
 
     def suggest_proxy(self, found_proxy):
         self.tor_proxy = found_proxy

@@ -22,7 +22,8 @@ FEERATE_MAX_DYNAMIC = 1500000
 FEERATE_WARNING_HIGH_FEE = 600000
 FEERATE_FALLBACK_STATIC_FEE = 150000
 FEERATE_DEFAULT_RELAY = 1000
-FEERATE_STATIC_VALUES = [5000, 10000, 20000, 30000, 50000, 70000, 100000, 150000, 200000, 300000]
+FEERATE_STATIC_VALUES = [1000, 2000, 5000, 10000, 20000, 30000,
+                         50000, 70000, 100000, 150000, 200000, 300000]
 
 
 config = None
@@ -139,6 +140,12 @@ class SimpleConfig(PrintError):
         if not self.is_modifiable(key):
             self.print_stderr("Warning: not changing config key '%s' set on the command line" % key)
             return
+        try:
+            json.dumps(key)
+            json.dumps(value)
+        except:
+            self.print_error(f"json error: cannot save {repr(key)} ({repr(value)})")
+            return
         self._set_key_in_user_config(key, value, save)
 
     def _set_key_in_user_config(self, key, value, save=True):
@@ -241,7 +248,7 @@ class SimpleConfig(PrintError):
 
         # command line -w option
         if self.get('wallet_path'):
-            return os.path.join(self.get('cwd'), self.get('wallet_path'))
+            return os.path.join(self.get('cwd', ''), self.get('wallet_path'))
 
         # path in config file
         path = self.get('default_wallet_path')
@@ -443,7 +450,7 @@ class SimpleConfig(PrintError):
         else:
             fee_rate = self.fee_per_kb(dyn=False)
             pos = self.static_fee_index(fee_rate)
-            maxp = 9
+            maxp = len(FEERATE_STATIC_VALUES) - 1
         return maxp, pos, fee_rate
 
     def static_fee(self, i):

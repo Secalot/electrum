@@ -7,11 +7,11 @@ from PyQt5.Qt import QVBoxLayout, QLabel
 
 from electrum.gui.qt.util import *
 from electrum.i18n import _
-from electrum.plugin import hook, DeviceMgr
-from electrum.util import PrintError, UserCancelled, bh2u
-from electrum.wallet import Wallet, Standard_Wallet
+from electrum.plugin import hook
+from electrum.util import bh2u
 
 from ..hw_wallet.qt import QtHandlerBase, QtPluginBase
+from ..hw_wallet.plugin import only_hook_if_libraries_available
 from .keepkey import KeepKeyPlugin, TIM_NEW, TIM_RECOVER, TIM_MNEMONIC
 
 
@@ -194,15 +194,17 @@ class QtPlugin(QtPluginBase):
     def create_handler(self, window):
         return QtHandler(window, self.pin_matrix_widget_class(), self.device)
 
+    @only_hook_if_libraries_available
     @hook
     def receive_menu(self, menu, addrs, wallet):
-        if type(wallet) is not Standard_Wallet:
+        if len(addrs) != 1:
             return
-        keystore = wallet.get_keystore()
-        if type(keystore) == self.keystore_class and len(addrs) == 1:
-            def show_address():
-                keystore.thread.add(partial(self.show_address, wallet, addrs[0]))
-            menu.addAction(_("Show on {}").format(self.device), show_address)
+        for keystore in wallet.get_keystores():
+            if type(keystore) == self.keystore_class:
+                def show_address():
+                    keystore.thread.add(partial(self.show_address, wallet, addrs[0], keystore))
+                device_name = "{} ({})".format(self.device, keystore.label)
+                menu.addAction(_("Show on {}").format(device_name), show_address)
 
     def show_settings_dialog(self, window, keystore):
         device_id = self.choose_device(window, keystore)
@@ -250,7 +252,7 @@ class QtPlugin(QtPluginBase):
             else:
                 msg = _("Enter the master private key beginning with xprv:")
                 def set_enabled():
-                    from keystore import is_xprv
+                    from electrum.bip32 import is_xprv
                     wizard.next_button.setEnabled(is_xprv(clean_text(text)))
                 text.textChanged.connect(set_enabled)
                 next_enabled = False

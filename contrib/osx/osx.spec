@@ -41,9 +41,12 @@ datas += collect_data_files('btchip')
 datas += collect_data_files('keepkeylib')
 datas += collect_data_files('ckcc')
 
+# Add the QR Scanner helper app
+datas += [(electrum + "contrib/osx/CalinsQRReader/build/Release/CalinsQRReader.app", "./contrib/osx/CalinsQRReader/build/Release/CalinsQRReader.app")]
+
 # Add libusb so Trezor and Safe-T mini will work
-binaries = [(electrum + "contrib/build-osx/libusb-1.0.dylib", ".")]
-binaries += [(electrum + "contrib/build-osx/libsecp256k1.0.dylib", ".")]
+binaries = [(electrum + "contrib/osx/libusb-1.0.dylib", ".")]
+binaries += [(electrum + "contrib/osx/libsecp256k1.0.dylib", ".")]
 
 # Workaround for "Retro Look":
 binaries += [b for b in collect_dynamic_libs('PyQt5') if 'macstyle' in b[0]]
@@ -60,7 +63,6 @@ a = Analysis([electrum+ MAIN_SCRIPT,
               electrum+'electrum/commands.py',
               electrum+'electrum/plugins/cosigner_pool/qt.py',
               electrum+'electrum/plugins/email_requests/qt.py',
-              electrum+'electrum/plugins/trezor/client.py',
               electrum+'electrum/plugins/trezor/qt.py',
               electrum+'electrum/plugins/safe_t/client.py',
               electrum+'electrum/plugins/safe_t/qt.py',
@@ -78,6 +80,15 @@ for d in a.datas:
     if 'pyconfig' in d[0]:
         a.datas.remove(d)
         break
+
+# Strip out parts of Qt that we never use. Reduces binary size by tens of MBs. see #4815
+qt_bins2remove=('qtweb', 'qt3d', 'qtgame', 'qtdesigner', 'qtquick', 'qtlocation', 'qttest', 'qtxml')
+print("Removing Qt binaries:", *qt_bins2remove)
+for x in a.binaries.copy():
+    for r in qt_bins2remove:
+        if x[0].lower().startswith(r):
+            a.binaries.remove(x)
+            print('----> Removed x =', x)
 
 pyz = PYZ(a.pure, a.zipped_data, cipher=block_cipher)
 

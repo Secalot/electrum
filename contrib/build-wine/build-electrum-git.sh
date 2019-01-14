@@ -1,14 +1,13 @@
 #!/bin/bash
 
 NAME_ROOT=electrum
-PYTHON_VERSION=3.6.6
 
 # These settings probably don't need any change
 export WINEPREFIX=/opt/wine64
 export PYTHONDONTWRITEBYTECODE=1
 export PYTHONHASHSEED=22
 
-PYHOME=c:/python$PYTHON_VERSION
+PYHOME=c:/python3
 PYTHON="wine $PYHOME/python.exe -OO -B"
 
 
@@ -25,7 +24,7 @@ pushd $WINEPREFIX/drive_c/electrum
 git submodule init
 git submodule update
 
-VERSION=`git describe --tags --dirty || printf 'custom'`
+VERSION=`git describe --tags --dirty --always`
 echo "Last commit: $VERSION"
 
 pushd ./contrib/deterministic-build/electrum-locale
@@ -34,7 +33,7 @@ if ! which msgfmt > /dev/null 2>&1; then
     exit 1
 fi
 for i in ./locale/*; do
-    dir=$i/LC_MESSAGES
+    dir=$WINEPREFIX/drive_c/electrum/electrum/$i/LC_MESSAGES
     mkdir -p $dir
     msgfmt --output-file=$dir/electrum.mo $i/electrum.po || true
 done
@@ -44,7 +43,6 @@ find -exec touch -d '2000-11-11T11:11:11+00:00' {} +
 popd
 
 cp $WINEPREFIX/drive_c/electrum/LICENCE .
-cp -r $WINEPREFIX/drive_c/electrum/contrib/deterministic-build/electrum-locale/locale $WINEPREFIX/drive_c/electrum/electrum/
 cp $WINEPREFIX/drive_c/electrum/contrib/deterministic-build/electrum-icons/icons_rc.py $WINEPREFIX/drive_c/electrum/electrum/gui/qt/
 
 # Install frozen dependencies
@@ -61,7 +59,7 @@ cd ..
 rm -rf dist/
 
 # build standalone and portable versions
-wine "C:/python$PYTHON_VERSION/scripts/pyinstaller.exe" --noconfirm --ascii --clean --name $NAME_ROOT-$VERSION -w deterministic.spec
+wine "$PYHOME/scripts/pyinstaller.exe" --noconfirm --ascii --clean --name $NAME_ROOT-$VERSION -w deterministic.spec
 
 # set timestamps in dist, in order to make the installer reproducible
 pushd dist

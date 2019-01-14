@@ -5,7 +5,7 @@
 import os
 import sys
 import platform
-import imp
+import importlib.util
 import argparse
 import subprocess
 import shutil
@@ -15,16 +15,24 @@ from setuptools.command.install import install
 
 shutil.copyfile('run_electrum', 'electrum/run_electrum.py')
 
+
+MIN_PYTHON_VERSION = "3.6.1"
+_min_python_version_tuple = tuple(map(int, (MIN_PYTHON_VERSION.split("."))))
+
+
+if sys.version_info[:3] < _min_python_version_tuple:
+    sys.exit("Error: Electrum requires Python version >= {}...".format(MIN_PYTHON_VERSION))
+
 with open('contrib/requirements/requirements.txt') as f:
     requirements = f.read().splitlines()
 
 with open('contrib/requirements/requirements-hw.txt') as f:
     requirements_hw = f.read().splitlines()
 
-version = imp.load_source('version', 'electrum/version.py')
-
-if sys.version_info[:3] < (3, 4, 0):
-    sys.exit("Error: Electrum requires Python version >= 3.4.0...")
+# load version.py; needlessly complicated alternative to "imp.load_source":
+version_spec = importlib.util.spec_from_file_location('version', 'electrum/version.py')
+version_module = version = importlib.util.module_from_spec(version_spec)
+version_spec.loader.exec_module(version_module)
 
 data_files = []
 
@@ -66,8 +74,7 @@ class CustomInstallCommand(install):
 setup(
     name="Electrum",
     version=version.ELECTRUM_VERSION,
-    install_requires=requirements + requirements_hw + ['pyqt5'],
-    packages=[
+    python_requires='>={}'.format(MIN_PYTHON_VERSION),    install_requires=requirements + requirements_hw + ['pyqt5'],    packages=[
         'electrum',
         'electrum.gui',
         'electrum.gui.qt',
