@@ -87,6 +87,7 @@ setup(
         '': ['*.txt', '*.json', '*.ttf', '*.otf'],
         'electrum': [
             'wordlist/*.txt',
+			'plugins/secalot/wordlist/*.txt',
             'locale/*/LC_MESSAGES/electrum.mo',
         ],
     },
