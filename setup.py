@@ -51,25 +51,8 @@ if platform.system() in ['Linux', 'FreeBSD', 'DragonFly']:
             usr_share = os.path.expanduser('~/.local/share')
     data_files += [
         (os.path.join(usr_share, 'applications/'), ['electrum.desktop']),
-        (os.path.join(usr_share, icons_dirname), ['icons/electrum.png'])
+        (os.path.join(usr_share, icons_dirname), ['electrum/gui/icons/electrum.png']),
     ]
-
-class CustomInstallCommand(install):
-    def run(self):
-        install.run(self)
-        # potentially build Qt icons file
-        try:
-            import PyQt5
-        except ImportError:
-            pass
-        else:
-            try:
-                path = os.path.join(self.install_lib, "electrum/gui/qt/icons_rc.py")
-                if not os.path.exists(path):
-                    subprocess.call(["pyrcc5", "icons.qrc", "-o", path])
-            except Exception as e:
-                print('Warning: building icons file failed with {}'.format(e))
-
 
 setup(
     name="Electrum",
@@ -90,6 +73,9 @@ setup(
 			'plugins/secalot/wordlist/*.txt',
             'locale/*/LC_MESSAGES/electrum.mo',
         ],
+        'electrum.gui': [
+            'icons/*',
+        ],
     },
     data_files=data_files,
     description="Lightweight Bitcoin Wallet",
@@ -98,9 +84,6 @@ setup(
     license="MIT Licence",
     url="https://electrum.org",
     long_description="""Lightweight Bitcoin Wallet""",
-    cmdclass={
-        'install': CustomInstallCommand,
-    },
     entry_points={
         'console_scripts': [
            'electrum=electrum.run_electrum:main',

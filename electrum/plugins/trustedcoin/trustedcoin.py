@@ -45,9 +45,10 @@ from electrum.mnemonic import Mnemonic
 from electrum.wallet import Multisig_Wallet, Deterministic_Wallet
 from electrum.i18n import _
 from electrum.plugin import BasePlugin, hook
-from electrum.util import NotEnoughFunds
+from electrum.util import NotEnoughFunds, UserFacingException
 from electrum.storage import STO_EV_USER_PW
 from electrum.network import Network
+from electrum.base_wizard import BaseWizard
 
 def get_signing_xpub(xtype):
     if not constants.net.TESTNET:
@@ -319,7 +320,13 @@ class Wallet_2fa(Multisig_Wallet):
         otp = int(otp)
         long_user_id, short_id = self.get_user_id()
         raw_tx = tx.serialize()
-        r = server.sign(short_id, raw_tx, otp)
+        try:
+            r = server.sign(short_id, raw_tx, otp)
+        except TrustedCoinException as e:
+            if e.status_code == 400:  # invalid OTP
+                raise UserFacingException(_('Invalid one-time password.')) from e
+            else:
+                raise
         if r:
             raw_tx = r.get('transaction')
             tx.update(raw_tx)
@@ -485,9 +492,9 @@ class TrustedCoinPlugin(BasePlugin):
     def do_clear(self, window):
         window.wallet.is_billing = False
 
-    def show_disclaimer(self, wizard):
-        wizard.set_icon(':icons/trustedcoin-wizard.png')
-        wizard.stack = []
+    def show_disclaimer(self, wizard: BaseWizard):
+        wizard.set_icon('trustedcoin-wizard.png')
+        wizard.reset_stack()
         wizard.confirm_dialog(title='Disclaimer', message='\n\n'.join(self.disclaimer_msg), run_next = lambda x: wizard.run('choose_seed'))
 
     def choose_seed(self, wizard):
@@ -574,9 +581,9 @@ class TrustedCoinPlugin(BasePlugin):
         f = lambda x: self.restore_choice(wizard, seed, x)
         wizard.passphrase_dialog(run_next=f) if is_ext else f('')
 
-    def restore_choice(self, wizard, seed, passphrase):
-        wizard.set_icon(':icons/trustedcoin-wizard.png')
-        wizard.stack = []
+    def restore_choice(self, wizard: BaseWizard, seed, passphrase):
+        wizard.set_icon('trustedcoin-wizard.png')
+        wizard.reset_stack()
         title = _('Restore 2FA wallet')
         msg = ' '.join([
             'You are going to restore a wallet protected with two-factor authentication.',

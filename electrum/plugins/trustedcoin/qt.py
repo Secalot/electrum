@@ -25,17 +25,20 @@
 
 from functools import partial
 import threading
-from threading import Thread
-import re
-from decimal import Decimal
+import sys
+import os
 
-from PyQt5.QtGui import *
-from PyQt5.QtCore import *
+from PyQt5.QtGui import QPixmap
+from PyQt5.QtCore import QObject, pyqtSignal
+from PyQt5.QtWidgets import (QTextEdit, QVBoxLayout, QLabel, QGridLayout, QHBoxLayout,
+                             QRadioButton, QCheckBox, QLineEdit)
 
-from electrum.gui.qt.util import *
+from electrum.gui.qt.util import (read_QIcon, WindowModalDialog, WaitingDialog, OkButton,
+                                  CancelButton, Buttons, icon_path, WWLabel, CloseButton)
 from electrum.gui.qt.qrcodewidget import QRCodeWidget
 from electrum.gui.qt.amountedit import AmountEdit
 from electrum.gui.qt.main_window import StatusBarButton
+from electrum.gui.qt.installwizard import InstallWizard
 from electrum.i18n import _
 from electrum.plugin import hook
 from electrum.util import PrintError, is_valid_email
@@ -90,7 +93,7 @@ class Plugin(TrustedCoinPlugin):
             action = lambda: window.show_message(msg)
         else:
             action = partial(self.settings_dialog, window)
-        button = StatusBarButton(QIcon(":icons/trustedcoin-status.png"),
+        button = StatusBarButton(read_QIcon("trustedcoin-status.png"),
                                  _("TrustedCoin"), action)
         window.statusBar().addPermanentWidget(button)
         self.start_request_thread(window.wallet)
@@ -152,7 +155,7 @@ class Plugin(TrustedCoinPlugin):
         hbox = QHBoxLayout()
 
         logo = QLabel()
-        logo.setPixmap(QPixmap(":icons/trustedcoin-status.png"))
+        logo.setPixmap(QPixmap(icon_path("trustedcoin-status.png")))
         msg = _('This wallet is protected by TrustedCoin\'s two-factor authentication.') + '<br/>'\
               + _("For more information, visit") + " <a href=\"https://api.trustedcoin.com/#/electrum-help\">https://api.trustedcoin.com/#/electrum-help</a>"
         label = QLabel(msg)
@@ -195,7 +198,7 @@ class Plugin(TrustedCoinPlugin):
         vbox.addLayout(Buttons(CloseButton(d)))
         d.exec_()
 
-    def go_online_dialog(self, wizard):
+    def go_online_dialog(self, wizard: InstallWizard):
         msg = [
             _("Your wallet file is: {}.").format(os.path.abspath(wizard.storage.path)),
             _("You need to be online in order to complete the creation of "
@@ -206,7 +209,7 @@ class Plugin(TrustedCoinPlugin):
             _('If you are online, click on "{}" to continue.').format(_('Next'))
         ]
         msg = '\n\n'.join(msg)
-        wizard.stack = []
+        wizard.reset_stack()
         wizard.confirm_dialog(title='', message=msg, run_next = lambda x: wizard.run('accept_terms_of_use'))
 
     def accept_terms_of_use(self, window):
@@ -253,7 +256,7 @@ class Plugin(TrustedCoinPlugin):
 
         tos_e.tos_signal.connect(on_result)
         tos_e.error_signal.connect(on_error)
-        t = Thread(target=request_TOS)
+        t = threading.Thread(target=request_TOS)
         t.setDaemon(True)
         t.start()
         email_e.textChanged.connect(set_enabled)

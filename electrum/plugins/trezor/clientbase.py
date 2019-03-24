@@ -65,7 +65,7 @@ class TrezorClientBase(PrintError):
             if issubclass(exc_type, Cancelled):
                 raise UserCancelled from exc_value
             elif issubclass(exc_type, TrezorFailure):
-                raise RuntimeError(exc_value.message) from exc_value
+                raise RuntimeError(str(exc_value)) from exc_value
             elif issubclass(exc_type, OutdatedFirmwareError):
                 raise UserFacingException(exc_value) from exc_value
             else:
@@ -147,7 +147,7 @@ class TrezorClientBase(PrintError):
         else:
             msg = _("Confirm on your {} device to set a PIN")
         with self.run_flow(msg):
-            trezorlib.device.change_pin(remove)
+            trezorlib.device.change_pin(self.client, remove)
 
     def clear_session(self):
         '''Clear the session to force pin (and passphrase if enabled)
@@ -203,6 +203,7 @@ class TrezorClientBase(PrintError):
                 self.client,
                 *args,
                 input_callback=input_callback,
+                type=recovery_type,
                 **kwargs)
 
     # ========= Unmodified trezorlib methods =========

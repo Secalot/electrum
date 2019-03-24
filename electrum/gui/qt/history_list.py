@@ -23,19 +23,30 @@
 # CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 # SOFTWARE.
 
+import os
 import webbrowser
 import datetime
 from datetime import date
 from typing import TYPE_CHECKING, Tuple, Dict
 import threading
 from enum import IntEnum
+from decimal import Decimal
+
+from PyQt5.QtGui import QMouseEvent, QFont, QBrush, QColor
+from PyQt5.QtCore import (Qt, QPersistentModelIndex, QModelIndex, QAbstractItemModel,
+                          QSortFilterProxyModel, QVariant, QItemSelectionModel, QDate, QPoint)
+from PyQt5.QtWidgets import (QMenu, QHeaderView, QLabel, QMessageBox,
+                             QPushButton, QComboBox, QVBoxLayout, QCalendarWidget,
+                             QGridLayout)
 
 from electrum.address_synchronizer import TX_HEIGHT_LOCAL
 from electrum.i18n import _
 from electrum.util import (block_explorer_URL, profiler, print_error, TxMinedInfo,
-                           OrderedDictWithIndex, PrintError)
+                           OrderedDictWithIndex, PrintError, timestamp_to_datetime)
 
-from .util import *
+from .util import (read_QIcon, MONOSPACE_FONT, Buttons, CancelButton, OkButton,
+                   filename_field, MyTreeView, AcceptFileDragDrop, WindowModalDialog,
+                   CloseButton)
 
 if TYPE_CHECKING:
     from electrum.wallet import Abstract_Wallet
@@ -77,9 +88,14 @@ class HistorySortModel(QSortFilterProxyModel):
         item2 = self.sourceModel().data(source_right, Qt.UserRole)
         if item1 is None or item2 is None:
             raise Exception(f'UserRole not set for column {source_left.column()}')
-        if item1.value() is None or item2.value() is None:
+        v1 = item1.value()
+        v2 = item2.value()
+        if v1 is None or isinstance(v1, Decimal) and v1.is_nan(): v1 = -float("inf")
+        if v2 is None or isinstance(v2, Decimal) and v2.is_nan(): v2 = -float("inf")
+        try:
+            return v1 < v2
+        except:
             return False
-        return item1.value() < item2.value()
 
 class HistoryModel(QAbstractItemModel, PrintError):
 
@@ -89,6 +105,7 @@ class HistoryModel(QAbstractItemModel, PrintError):
         self.view = None  # type: HistoryList
         self.transactions = OrderedDictWithIndex()
         self.tx_status_cache = {}  # type: Dict[str, Tuple[int, str]]
+        self.summary = None
 
     def set_view(self, history_list: 'HistoryList'):
         # FIXME HistoryModel and HistoryList mutually depend on each other.
@@ -142,7 +159,7 @@ class HistoryModel(QAbstractItemModel, PrintError):
             return QVariant(d[col])
         if role not in (Qt.DisplayRole, Qt.EditRole):
             if col == HistoryColumns.STATUS_ICON and role == Qt.DecorationRole:
-                return QVariant(self.view.icon_cache.get(":icons/" +  TX_ICONS[status]))
+                return QVariant(read_QIcon(TX_ICONS[status]))
             elif col == HistoryColumns.STATUS_ICON and role == Qt.ToolTipRole:
                 return QVariant(str(conf) + _(" confirmation" + ("s" if conf != 1 else "")))
             elif col > HistoryColumns.DESCRIPTION and role == Qt.TextAlignmentRole:
@@ -152,7 +169,7 @@ class HistoryModel(QAbstractItemModel, PrintError):
                 return QVariant(monospace_font)
             elif col == HistoryColumns.DESCRIPTION and role == Qt.DecorationRole \
                     and self.parent.wallet.invoices.paid.get(tx_hash):
-                return QVariant(self.view.icon_cache.get(":icons/seal"))
+                return QVariant(read_QIcon("seal"))
             elif col in (HistoryColumns.DESCRIPTION, HistoryColumns.COIN_VALUE) \
                     and role == Qt.ForegroundRole and tx_item['value'].value < 0:
                 red_brush = QBrush(QColor("#BC1E1E"))
@@ -283,6 +300,7 @@ class HistoryModel(QAbstractItemModel, PrintError):
             'confirmations':  tx_mined_info.conf,
             'timestamp':      tx_mined_info.timestamp,
             'txpos_in_block': tx_mined_info.txpos,
+            'date':           timestamp_to_datetime(tx_mined_info.timestamp),
         })
         topLeft = self.createIndex(row, 0)
         bottomRight = self.createIndex(row, len(HistoryColumns) - 1)
@@ -577,7 +595,7 @@ class HistoryList(MyTreeView, AcceptFileDragDrop):
                 if child_tx:
                     menu.addAction(_("Child pays for parent"), lambda: self.parent.cpfp(tx, child_tx))
         if pr_key:
-            menu.addAction(self.icon_cache.get(":icons/seal"), _("View invoice"), lambda: self.parent.show_invoice(pr_key))
+            menu.addAction(read_QIcon("seal"), _("View invoice"), lambda: self.parent.show_invoice(pr_key))
         if tx_URL:
             menu.addAction(_("View on block explorer"), lambda: webbrowser.open(tx_URL))
         menu.exec_(self.viewport().mapToGlobal(position))

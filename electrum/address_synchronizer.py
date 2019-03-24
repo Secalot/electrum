@@ -373,11 +373,13 @@ class AddressSynchronizer(PrintError):
     @profiler
     def load_transactions(self):
         # load txi, txo, tx_fees
-        self.txi = self.storage.get('txi', {})
+        # bookkeeping data of is_mine inputs of transactions
+        self.txi = self.storage.get('txi', {})  # txid -> address -> (prev_outpoint, value)
         for txid, d in list(self.txi.items()):
             for addr, lst in d.items():
                 self.txi[txid][addr] = set([tuple(x) for x in lst])
-        self.txo = self.storage.get('txo', {})
+        # bookkeeping data of is_mine outputs of transactions
+        self.txo = self.storage.get('txo', {})  # txid -> address -> (output_index, value, is_coinbase)
         self.tx_fees = self.storage.get('tx_fees', {})
         tx_list = self.storage.get('transactions', {})
         # load transactions
@@ -401,6 +403,7 @@ class AddressSynchronizer(PrintError):
     @profiler
     def load_local_history(self):
         self._history_local = {}  # address -> set(txid)
+        self._address_history_changed_events = defaultdict(asyncio.Event)  # address -> Event
         for txid in itertools.chain(self.txi, self.txo):
             self._add_tx_to_local_history(txid)
 
@@ -540,6 +543,7 @@ class AddressSynchronizer(PrintError):
                 cur_hist = self._history_local.get(addr, set())
                 cur_hist.add(txid)
                 self._history_local[addr] = cur_hist
+                self._mark_address_history_changed(addr)
 
     def _remove_tx_from_local_history(self, txid):
         with self.transaction_lock:
@@ -551,6 +555,21 @@ class AddressSynchronizer(PrintError):
                     pass
                 else:
                     self._history_local[addr] = cur_hist
+
+    def _mark_address_history_changed(self, addr: str) -> None:
+        # history for this address changed, wake up coroutines:
+        self._address_history_changed_events[addr].set()
+        # clear event immediately so that coroutines can wait() for the next change:
+        self._address_history_changed_events[addr].clear()
+
+    async def wait_for_address_history_to_change(self, addr: str) -> None:
+        """Wait until the server tells us about a new transaction related to addr.
+
+        Unconfirmed and confirmed transactions are not distinguished, and so e.g. SPV
+        is not taken into account.
+        """
+        assert self.is_mine(addr), "address needs to be is_mine to be watched"
+        await self._address_history_changed_events[addr].wait()
 
     def add_unverified_tx(self, tx_hash, tx_height):
         if tx_hash in self.verified_tx:

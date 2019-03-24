@@ -1,17 +1,28 @@
+import asyncio
 import os.path
 import time
 import sys
 import platform
 import queue
-from functools import partial
-from typing import NamedTuple, Callable, Optional, TYPE_CHECKING
+import traceback
 
-from PyQt5.QtGui import *
-from PyQt5.QtCore import *
-from PyQt5.QtWidgets import *
+from functools import partial, lru_cache
+from typing import NamedTuple, Callable, Optional, TYPE_CHECKING, Union, List, Dict
+
+from PyQt5.QtGui import (QFont, QColor, QCursor, QPixmap, QStandardItem,
+                         QPalette, QIcon)
+from PyQt5.QtCore import (Qt, QPersistentModelIndex, QModelIndex, pyqtSignal,
+                          QCoreApplication, QItemSelectionModel, QThread,
+                          QSortFilterProxyModel, QSize, QLocale)
+from PyQt5.QtWidgets import (QPushButton, QLabel, QMessageBox, QHBoxLayout,
+                             QAbstractItemView, QVBoxLayout, QLineEdit,
+                             QStyle, QDialog, QGroupBox, QButtonGroup, QRadioButton,
+                             QFileDialog, QWidget, QToolButton, QTreeView, QPlainTextEdit,
+                             QHeaderView, QApplication, QToolTip, QTreeWidget, QStyledItemDelegate)
 
 from electrum.i18n import _, languages
-from electrum.util import FileImportFailed, FileExportFailed
+from electrum.util import (FileImportFailed, FileExportFailed,
+                           resource_path)
 from electrum.paymentrequest import PR_UNPAID, PR_PAID, PR_EXPIRED
 
 if TYPE_CHECKING:
@@ -29,9 +40,9 @@ else:
 dialogs = []
 
 pr_icons = {
-    PR_UNPAID:":icons/unpaid.png",
-    PR_PAID:":icons/confirmed.png",
-    PR_EXPIRED:":icons/expired.png"
+    PR_UNPAID:"unpaid.png",
+    PR_PAID:"confirmed.png",
+    PR_EXPIRED:"expired.png"
 }
 
 pr_tooltips = {
@@ -422,8 +433,6 @@ class MyTreeView(QTreeView):
         self.customContextMenuRequested.connect(create_menu)
         self.setUniformRowHeights(True)
 
-        self.icon_cache = IconCache()
-
         # Control which columns are editable
         if editable_columns is None:
             editable_columns = {stretch_column}
@@ -464,13 +473,17 @@ class MyTreeView(QTreeView):
             assert set_current.isValid()
             self.selectionModel().select(QModelIndex(set_current), QItemSelectionModel.SelectCurrent)
 
-    def update_headers(self, headers):
+    def update_headers(self, headers: Union[List[str], Dict[int, str]]):
+        # headers is either a list of column names, or a dict: (col_idx->col_name)
+        if not isinstance(headers, dict):  # convert to dict
+            headers = dict(enumerate(headers))
+        col_names = [headers[col_idx] for col_idx in sorted(headers.keys())]
         model = self.model()
-        model.setHorizontalHeaderLabels(headers)
+        model.setHorizontalHeaderLabels(col_names)
         self.header().setStretchLastSection(False)
-        for col in range(len(headers)):
-            sm = QHeaderView.Stretch if col == self.stretch_column else QHeaderView.ResizeToContents
-            self.header().setSectionResizeMode(col, sm)
+        for col_idx in headers:
+            sm = QHeaderView.Stretch if col_idx == self.stretch_column else QHeaderView.ResizeToContents
+            self.header().setSectionResizeMode(col_idx, sm)
 
     def keyPressEvent(self, event):
         if self.itemDelegate().opened:
@@ -592,8 +605,9 @@ class ButtonsWidget(QWidget):
 
     def addButton(self, icon_name, on_click, tooltip):
         button = QToolButton(self)
-        button.setIcon(QIcon(icon_name))
+        button.setIcon(read_QIcon(icon_name))
         button.setIconSize(QSize(25,25))
+        button.setCursor(QCursor(Qt.PointingHandCursor))
         button.setStyleSheet("QToolButton { border: none; hover {border: 1px} pressed {border: 1px} padding: 0px; }")
         button.setVisible(True)
         button.setToolTip(tooltip)
@@ -603,7 +617,7 @@ class ButtonsWidget(QWidget):
 
     def addCopyButton(self, app):
         self.app = app
-        self.addButton(":icons/copy.png", self.on_copy, _("Copy to clipboard"))
+        self.addButton("copy.png", self.on_copy, _("Copy to clipboard"))
 
     def on_copy(self):
         self.app.clipboard().setText(self.text())
@@ -788,15 +802,14 @@ def get_parent_main_window(widget):
             return widget
     return None
 
-class IconCache:
 
-    def __init__(self):
-        self.__cache = {}
+def icon_path(icon_basename):
+    return resource_path('gui', 'icons', icon_basename)
 
-    def get(self, file_name):
-        if file_name not in self.__cache:
-            self.__cache[file_name] = QIcon(file_name)
-        return self.__cache[file_name]
+
+@lru_cache(maxsize=1000)
+def read_QIcon(icon_basename):
+    return QIcon(icon_path(icon_basename))
 
 
 def get_default_language():
@@ -818,6 +831,7 @@ class FromList(QTreeWidget):
         sm = QHeaderView.ResizeToContents
         self.header().setSectionResizeMode(0, sm)
         self.header().setSectionResizeMode(1, sm)
+
 
 if __name__ == "__main__":
     app = QApplication([])

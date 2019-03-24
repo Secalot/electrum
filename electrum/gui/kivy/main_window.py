@@ -16,7 +16,7 @@ from electrum.plugin import run_hook
 from electrum.util import format_satoshis, format_satoshis_plain
 from electrum.paymentrequest import PR_UNPAID, PR_PAID, PR_UNKNOWN, PR_EXPIRED
 from electrum import blockchain
-from electrum.network import Network
+from electrum.network import Network, TxBroadcastError, BestEffortRequestFailed
 from .i18n import _
 
 from kivy.app import App
@@ -671,7 +671,7 @@ class ElectrumWindow(App):
         self.receive_screen = None
         self.requests_screen = None
         self.address_screen = None
-        self.icon = "icons/electrum.png"
+        self.icon = "electrum/gui/icons/electrum.png"
         self.tabs = self.root.ids['tabs']
 
     def update_interfaces(self, dt):
@@ -829,9 +829,6 @@ class ElectrumWindow(App):
             self._clipboard.copy(label.data)
             Clock.schedule_once(lambda dt: self.show_info(_('Text copied to clipboard.\nTap again to display it as QR code.')))
 
-    def set_send(self, address, amount, label, message):
-        self.send_payment(address, amount=amount, label=label, message=message)
-
     def show_error(self, error, width='200dp', pos=None, arrow_pos=None,
         exit=False, icon='atlas://electrum/gui/kivy/theming/light/error', duration=0,
         modal=False):
@@ -917,14 +914,16 @@ class ElectrumWindow(App):
         Clock.schedule_once(lambda dt: on_success(tx))
 
     def _broadcast_thread(self, tx, on_complete):
-
+        status = False
         try:
             self.network.run_from_another_thread(self.network.broadcast_transaction(tx))
-        except Exception as e:
-            ok, msg = False, repr(e)
+        except TxBroadcastError as e:
+            msg = e.get_message_for_gui()
+        except BestEffortRequestFailed as e:
+            msg = repr(e)
         else:
-            ok, msg = True, tx.txid()
-        Clock.schedule_once(lambda dt: on_complete(ok, msg))
+            status, msg = True, tx.txid()
+        Clock.schedule_once(lambda dt: on_complete(status, msg))
 
     def broadcast(self, tx, pr=None):
         def on_complete(ok, msg):
@@ -937,11 +936,8 @@ class ElectrumWindow(App):
                     self.wallet.invoices.save()
                     self.update_tab('invoices')
             else:
-                display_msg = _('The server returned an error when broadcasting the transaction.')
-                if msg:
-                    display_msg += '\n' + msg
-                display_msg = display_msg[:500]
-                self.show_error(display_msg)
+                msg = msg or ''
+                self.show_error(msg)
 
         if self.network and self.network.is_connected():
             self.show_info(_('Sending'))

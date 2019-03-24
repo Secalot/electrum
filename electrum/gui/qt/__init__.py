@@ -23,6 +23,7 @@
 # CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 # SOFTWARE.
 
+import os
 import signal
 import sys
 import traceback
@@ -34,14 +35,14 @@ try:
 except Exception:
     sys.exit("Error: Could not import PyQt5 on Linux systems, you may try 'sudo apt-get install python3-pyqt5'")
 
-from PyQt5.QtGui import *
-from PyQt5.QtWidgets import *
-from PyQt5.QtCore import *
+from PyQt5.QtGui import QGuiApplication
+from PyQt5.QtWidgets import (QApplication, QSystemTrayIcon, QWidget, QMenu,
+                             QMessageBox)
+from PyQt5.QtCore import QObject, pyqtSignal, QTimer
 import PyQt5.QtCore as QtCore
 
 from electrum.i18n import _, set_language
 from electrum.plugin import run_hook
-from electrum.storage import WalletStorage
 from electrum.base_wizard import GoBack
 from electrum.util import (UserCancelled, PrintError, profiler,
                            WalletFileException, BitcoinException, get_new_wallet_name)
@@ -49,15 +50,7 @@ from electrum.util import (UserCancelled, PrintError, profiler,
 from .installwizard import InstallWizard
 
 
-try:
-    from . import icons_rc
-except Exception as e:
-    print(e)
-    print("Error: Could not find icons file.")
-    print("Please run 'pyrcc5 icons.qrc -o electrum/gui/qt/icons_rc.py'")
-    sys.exit(1)
-
-from .util import *   # * needed for plugins
+from .util import get_default_language, read_QIcon, ColorScheme
 from .main_window import ElectrumWindow
 from .network_dialog import NetworkDialog
 
@@ -105,6 +98,7 @@ class ElectrumGui(PrintError):
         self.efilter = OpenFileEventFilter(self.windows)
         self.app = QElectrumApplication(sys.argv)
         self.app.installEventFilter(self.efilter)
+        self.app.setWindowIcon(read_QIcon("electrum.png"))
         # timer
         self.timer = QTimer(self.app)
         self.timer.setSingleShot(False)
@@ -133,7 +127,7 @@ class ElectrumGui(PrintError):
                 self.app.setStyleSheet(qdarkstyle.load_stylesheet_pyqt5())
             except BaseException as e:
                 use_dark_theme = False
-                self.print_error('Error setting dark theme: {}'.format(e))
+                self.print_error('Error setting dark theme: {}'.format(repr(e)))
         # Even if we ourselves don't set the dark theme,
         # the OS/window manager/etc might set *a dark theme*.
         # Hence, try to choose colors accordingly:
@@ -157,9 +151,9 @@ class ElectrumGui(PrintError):
 
     def tray_icon(self):
         if self.dark_icon:
-            return QIcon(':icons/electrum_dark_icon.png')
+            return read_QIcon('electrum_dark_icon.png')
         else:
-            return QIcon(':icons/electrum_light_icon.png')
+            return read_QIcon('electrum_light_icon.png')
 
     def toggle_tray_icon(self):
         self.dark_icon = not self.dark_icon
@@ -233,10 +227,10 @@ class ElectrumGui(PrintError):
             else:
                 return
         if not wallet:
-            storage = WalletStorage(path, manual_upgrades=True)
-            wizard = InstallWizard(self.config, self.app, self.plugins, storage)
+            wizard = InstallWizard(self.config, self.app, self.plugins, None)
             try:
-                wallet = wizard.run_and_get_wallet(self.daemon.get_wallet)
+                if wizard.select_storage(path, self.daemon.get_wallet):
+                    wallet = wizard.run_and_get_wallet()
             except UserCancelled:
                 pass
             except GoBack as e:

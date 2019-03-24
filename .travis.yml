@@ -44,9 +44,13 @@ jobs:
     - name: "Android build"
       language: python
       python: 3.7
+      env:
+        # reset API key to not have make_locale upload stuff here
+        - crowdin_api_key=
       services:
         - docker
       install:
+        - pip install requests && ./contrib/make_locale
         - ./contrib/make_packages
         - sudo docker build --no-cache -t electrum-android-builder-img electrum/gui/kivy/tools
       script:
@@ -69,6 +73,17 @@ jobs:
         - git fetch --all --tags
       script: ./contrib/osx/make_osx
       after_script: ls -lah dist && md5 dist/*
+      after_success: true
+    - name: "AppImage build"
+      sudo: true
+      language: c
+      python: false
+      services:
+        - docker
+      install:
+        - sudo docker build --no-cache -t electrum-appimage-builder-img ./contrib/build-linux/appimage/
+      script:
+        - sudo docker run --name electrum-appimage-builder-cont -v $PWD:/opt/electrum --rm --workdir /opt/electrum/contrib/build-linux/appimage electrum-appimage-builder-img ./build.sh
       after_success: true
     - stage: release check
       install:

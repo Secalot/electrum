@@ -39,7 +39,7 @@ from .util import PrintError, ignore_exceptions, log_exceptions, bfh, SilentTask
 from . import util
 from . import x509
 from . import pem
-from .version import ELECTRUM_VERSION, PROTOCOL_VERSION
+from . import version
 from . import blockchain
 from .blockchain import Blockchain
 from . import constants
@@ -71,8 +71,16 @@ class NotificationSession(RPCSession):
         self.cache = {}
         self.in_flight_requests_semaphore = asyncio.Semaphore(100)
         self.default_timeout = NetworkTimeout.Generic.NORMAL
+        self._msg_counter = 0
+        self.interface = None  # type: Optional[Interface]
+
+    def _get_and_inc_msg_counter(self):
+        # runs in event loop thread, no need for lock
+        self._msg_counter += 1
+        return self._msg_counter
 
     async def handle_request(self, request):
+        self.maybe_log(f"--> {request}")
         # note: if server sends malformed request and we raise, the superclass
         # will catch the exception, count errors, and at some point disconnect
         if isinstance(request, Notification):
@@ -91,12 +99,17 @@ class NotificationSession(RPCSession):
             timeout = self.default_timeout
         # note: the semaphore implementation guarantees no starvation
         async with self.in_flight_requests_semaphore:
+            msg_id = self._get_and_inc_msg_counter()
+            self.maybe_log(f"<-- {args} {kwargs} (id: {msg_id})")
             try:
-                return await asyncio.wait_for(
+                response = await asyncio.wait_for(
                     super().send_request(*args, **kwargs),
                     timeout)
             except asyncio.TimeoutError as e:
-                raise RequestTimedOut('request timed out: {}'.format(args)) from e
+                raise RequestTimedOut(f'request timed out: {args} (id: {msg_id})') from e
+            else:
+                self.maybe_log(f"--> {response} (id: {msg_id})")
+                return response
 
     async def subscribe(self, method: str, params: List, queue: asyncio.Queue):
         # note: until the cache is written for the first time,
@@ -122,6 +135,11 @@ class NotificationSession(RPCSession):
     def get_hashable_key_for_rpc_call(cls, method, params):
         """Hashable index for subscriptions and cache"""
         return str(method) + repr(params)
+
+    def maybe_log(self, msg: str) -> None:
+        if not self.interface: return
+        if self.interface.debug or self.interface.network.debug:
+            self.interface.print_error(msg)
 
 
 class GracefulDisconnect(Exception): pass
@@ -173,6 +191,9 @@ class Interface(PrintError):
         self.tip_header = None
         self.tip = 0
 
+        # Dump network messages (only for this interface).  Set at runtime from the console.
+        self.debug = False
+
         asyncio.run_coroutine_threadsafe(
             self.network.main_taskgroup.spawn(self.run()), self.network.asyncio_loop)
         self.group = SilentTaskGroup()
@@ -207,7 +228,7 @@ class Interface(PrintError):
     async def _try_saving_ssl_cert_for_first_time(self, ca_ssl_context):
         try:
             ca_signed = await self.is_server_ca_signed(ca_ssl_context)
-        except (OSError, aiorpcx.socks.SOCKSFailure) as e:
+        except (OSError, aiorpcx.socks.SOCKSError) as e:
             raise ErrorGettingSSLCertFromServer(e) from e
         if ca_signed:
             with open(self.cert_path, 'w') as f:
@@ -267,7 +288,7 @@ class Interface(PrintError):
             try:
                 return await func(self, *args, **kwargs)
             except GracefulDisconnect as e:
-                self.print_error("disconnecting gracefully. {}".format(e))
+                self.print_error("disconnecting gracefully. {}".format(repr(e)))
             finally:
                 await self.network.connection_down(self)
                 self.got_disconnected.set_result(1)
@@ -284,7 +305,7 @@ class Interface(PrintError):
             return
         try:
             await self.open_session(ssl_context)
-        except (asyncio.CancelledError, OSError, aiorpcx.socks.SOCKSFailure) as e:
+        except (asyncio.CancelledError, OSError, aiorpcx.socks.SOCKSError) as e:
             self.print_error('disconnecting due to: {}'.format(repr(e)))
             return
 
@@ -370,9 +391,10 @@ class Interface(PrintError):
                                      host=self.host, port=self.port,
                                      ssl=sslc, proxy=self.proxy) as session:
             self.session = session  # type: NotificationSession
+            self.session.interface = self
             self.session.default_timeout = self.network.get_network_timeout_seconds(NetworkTimeout.Generic)
             try:
-                ver = await session.send_request('server.version', [ELECTRUM_VERSION, PROTOCOL_VERSION])
+                ver = await session.send_request('server.version', [version.ELECTRUM_VERSION, version.PROTOCOL_VERSION])
             except aiorpcx.jsonrpc.RPCError as e:
                 raise GracefulDisconnect(e)  # probably 'unsupported protocol version'
             if exit_early:

@@ -38,6 +38,7 @@ from .import util, ecc
 from .util import bfh, bh2u, format_satoshis, json_decode, print_error, json_encode
 from . import bitcoin
 from .bitcoin import is_address,  hash_160, COIN, TYPE_ADDRESS
+from . import bip32
 from .i18n import _
 from .transaction import Transaction, multisig_script, TxOutput
 from .paymentrequest import PR_PAID, PR_UNPAID, PR_UNKNOWN, PR_EXPIRED
@@ -219,6 +220,11 @@ class Commands:
         self.wallet.storage.write()
         return {'password':self.wallet.has_password()}
 
+    @command('w')
+    def get(self, key):
+        """Return item from wallet storage"""
+        return self.wallet.storage.get(key)
+
     @command('')
     def getconfig(self, key):
         """Return a configuration variable. """
@@ -329,7 +335,8 @@ class Commands:
     def broadcast(self, tx):
         """Broadcast a transaction to the network. """
         tx = Transaction(tx)
-        return self.network.run_from_another_thread(self.network.broadcast_transaction(tx))
+        self.network.run_from_another_thread(self.network.broadcast_transaction(tx))
+        return tx.txid()
 
     @command('')
     def createmultisig(self, num, pubkeys):
@@ -428,6 +435,16 @@ class Commands:
         """Get master private key. Return your wallet\'s master private key"""
         return str(self.wallet.keystore.get_master_private_key(password))
 
+    @command('')
+    def convert_xkey(self, xkey, xtype):
+        """Convert xtype of a master key. e.g. xpub -> ypub"""
+        is_xprv = bip32.is_xprv(xkey)
+        if not bip32.is_xpub(xkey) and not is_xprv:
+            raise Exception('xkey should be a master public/private key')
+        _, depth, fingerprint, child_number, c, cK = bip32.deserialize_xkey(xkey, is_xprv)
+        serialize = bip32.serialize_xprv if is_xprv else bip32.serialize_xpub
+        return serialize(xtype, c, cK, depth, fingerprint, child_number)
+
     @command('wp')
     def getseed(self, password=None):
         """Get seed phrase. Print the generation seed of your wallet."""
@@ -520,11 +537,14 @@ class Commands:
         return tx.as_dict()
 
     @command('w')
-    def history(self, year=None, show_addresses=False, show_fiat=False, show_fees=False):
+    def history(self, year=None, show_addresses=False, show_fiat=False, show_fees=False,
+                from_height=None, to_height=None):
         """Wallet history. Returns the transaction history of your wallet."""
         kwargs = {
             'show_addresses': show_addresses,
             'show_fees': show_fees,
+            'from_height': from_height,
+            'to_height': to_height,
         }
         if year:
             import time
@@ -814,7 +834,9 @@ command_options = {
     'show_fees':   (None, "Show miner fees paid by transactions"),
     'year':        (None, "Show history for a given year"),
     'fee_method':  (None, "Fee estimation method to use"),
-    'fee_level':   (None, "Float between 0.0 and 1.0, representing fee slider position")
+    'fee_level':   (None, "Float between 0.0 and 1.0, representing fee slider position"),
+    'from_height': (None, "Only show transactions that confirmed after given block height"),
+    'to_height':   (None, "Only show transactions that confirmed before given block height"),
 }
 
 
@@ -826,6 +848,8 @@ arg_types = {
     'nbits': int,
     'imax': int,
     'year': int,
+    'from_height': int,
+    'to_height': int,
     'tx': tx_from_str,
     'pubkeys': json_loads,
     'jsontx': json_loads,
@@ -909,6 +933,7 @@ def add_network_options(parser):
     parser.add_argument("-s", "--server", dest="server", default=None, help="set server host:port:protocol, where protocol is either t (tcp) or s (ssl)")
     parser.add_argument("-p", "--proxy", dest="proxy", default=None, help="set proxy [type:]host[:port], where type is socks4,socks5 or http")
     parser.add_argument("--noonion", action="store_true", dest="noonion", default=None, help="do not try to connect to onion servers")
+    parser.add_argument("--skipmerklecheck", action="store_true", dest="skipmerklecheck", default=False, help="Tolerate invalid merkle proofs from server")
 
 def add_global_options(parser):
     group = parser.add_argument_group('global options')

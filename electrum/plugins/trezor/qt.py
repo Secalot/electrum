@@ -1,11 +1,14 @@
 from functools import partial
 import threading
 
-from PyQt5.Qt import Qt
-from PyQt5.Qt import QGridLayout, QInputDialog, QPushButton
-from PyQt5.Qt import QVBoxLayout, QLabel
+from PyQt5.QtCore import Qt, QEventLoop, pyqtSignal
+from PyQt5.QtWidgets import (QVBoxLayout, QLabel, QGridLayout, QPushButton,
+                             QHBoxLayout, QButtonGroup, QGroupBox, QDialog,
+                             QLineEdit, QRadioButton, QCheckBox, QWidget,
+                             QMessageBox, QFileDialog, QSlider, QTabWidget)
 
-from electrum.gui.qt.util import *
+from electrum.gui.qt.util import (WindowModalDialog, WWLabel, Buttons, CancelButton,
+                                  OkButton, CloseButton)
 from electrum.i18n import _
 from electrum.plugin import hook
 from electrum.util import bh2u
@@ -205,7 +208,7 @@ class QtPlugin(QtPluginBase):
         bg_numwords = QButtonGroup()
         for i, count in enumerate([12, 18, 24]):
             rb = QRadioButton(gb)
-            rb.setText(_("%d words") % count)
+            rb.setText(_("{:d} words").format(count))
             bg_numwords.addButton(rb)
             bg_numwords.setId(rb, i)
             hbox1.addWidget(rb)
@@ -259,8 +262,8 @@ class QtPlugin(QtPluginBase):
 
 
 class Plugin(TrezorPlugin, QtPlugin):
-    icon_unpaired = ":icons/trezor_unpaired.png"
-    icon_paired = ":icons/trezor.png"
+    icon_unpaired = "trezor_unpaired.png"
+    icon_paired = "trezor.png"
 
     @classmethod
     def pin_matrix_widget_class(self):
@@ -407,7 +410,7 @@ class SettingsDialog(WindowModalDialog):
 
         def slider_moved():
             mins = timeout_slider.sliderPosition()
-            timeout_minutes.setText(_("%2d minutes") % mins)
+            timeout_minutes.setText(_("{:2d} minutes").format(mins))
 
         def slider_released():
             config.set_session_timeout(timeout_slider.sliderPosition() * 60)
