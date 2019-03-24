@@ -290,12 +290,12 @@ class Secalot_KeyStore(Hardware_KeyStore):
 
             if segwitTransaction:
                 dongle.startUntrustedTransaction(True, inputIndex,
-                                                            chipInputs, redeemScripts[inputIndex])
+                                                            chipInputs, redeemScripts[inputIndex], version=tx.version)
                 dongle.finalizeInputFull(txOutput)
                 while inputIndex < len(inputs):
                     singleInput = [chipInputs[inputIndex]]
                     dongle.startUntrustedTransaction(False, 0,
-                                                     singleInput, redeemScripts[inputIndex])
+                                                     singleInput, redeemScripts[inputIndex], version=tx.version)
                     try:
                         inputSignature = dongle.untrustedHashSign(inputsPaths[inputIndex], lockTime=tx.locktime)
                     except BTChipException as e:
@@ -311,7 +311,7 @@ class Secalot_KeyStore(Hardware_KeyStore):
 
                 while inputIndex < len(inputs):
                     dongle.startUntrustedTransaction(firstTransaction, inputIndex,
-                                                            chipInputs, redeemScripts[inputIndex])
+                                                            chipInputs, redeemScripts[inputIndex], version=tx.version)
                     firstTransaction = False
                     dongle.finalizeInputFull(txOutput)
                     try:

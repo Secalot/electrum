@@ -1,5 +1,5 @@
-from .secalotPersoMainDialog import *
-from  .secalotPersoDisplaySeedDialog import *
+from .secalotPersoMainDialog import Ui_SecalotPersoMainDialog
+from  .secalotPersoDisplaySeedDialog import Ui_SecalotPersoDisplaySeedDialog
 
 from PyQt5 import QtCore
 from PyQt5.QtWidgets import QDialog, QMessageBox, QInputDialog, QLineEdit
